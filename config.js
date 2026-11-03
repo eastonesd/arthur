@@ -2,7 +2,7 @@
 window.JARVIS_CONFIG = {
   // Google Cloud 的「OAuth 用戶端 ID」（網頁應用程式類型）。
   // 這串 ID 是公開資訊，可以放進 GitHub；請勿放「用戶端密鑰」(client secret)。
-  googleClientId: "",
+  googleClientId: "678637279500-tocvq9136ehbpihr5ou3oje5ugu1vb6r.apps.googleusercontent.com",
 
   // 要讀取的 Google 日曆，"primary" 代表主要日曆
   calendarId: "primary",
