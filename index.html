@@ -3,63 +3,98 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>INSIGHT</title>
+<title>JARVIS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="style.css">
+<script src="config.js" defer></script>
 <script src="script.js" defer></script>
 </head>
 <body>
-<div class="wrap">
-  <div class="left">
-    <div class="core" aria-hidden="true">
-      <canvas id="orb"></canvas>
-      <div class="hud"><span>Core <b id="clock">--:--:--</b></span><span>Status <b>Online</b></span></div>
+<canvas id="stars" aria-hidden="true"></canvas>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" /><circle cx="20" cy="20" r="10" /><circle cx="20" cy="20" r="3.5" class="dot" /></svg>
+    <span class="brand-name">JARVIS</span>
+  </div>
+  <div class="topbar-right">
+    <span class="date" id="date">----/--/--</span>
+    <span class="time" id="time">--:--</span>
+    <button class="btn-link" id="googleBtn" type="button">連接 Google</button>
+  </div>
+</header>
+
+<main class="grid">
+  <!-- 今日指揮中心 -->
+  <section class="panel p-agenda" aria-labelledby="h-agenda">
+    <header class="panel-head">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      <h2 id="h-agenda">今日指揮中心</h2>
+      <span class="tag" id="agendaTag">範例</span>
+    </header>
+    <ol class="agenda" id="agenda"></ol>
+    <div class="routines" id="routines"></div>
+  </section>
+
+  <!-- 核心 -->
+  <section class="core-wrap" aria-label="JARVIS 核心">
+    <div class="core">
+      <img src="assets/core.jpg" alt="" class="core-img" width="880" height="880">
+      <div class="core-glow" aria-hidden="true"></div>
     </div>
+    <p class="summary" id="summary">今日 – 個行程・– 位客戶生日・– 封未讀郵件</p>
+  </section>
 
-    <section class="panel search" aria-label="搜尋">
-      <div class="chips" role="group" aria-label="搜尋類別">
-        <button class="chip" id="m-law" data-mode="法規" aria-pressed="true">法規</button>
-        <button class="chip" id="m-case" data-mode="判例" aria-pressed="false">判例</button>
-        <button class="chip" id="m-clause" data-mode="條款" aria-pressed="false">條款</button>
+  <!-- 通訊中心 -->
+  <section class="panel p-mail" aria-labelledby="h-mail">
+    <header class="panel-head">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+      <h2 id="h-mail">通訊中心</h2>
+      <span class="tag" id="mailTag">範例</span>
+    </header>
+    <div class="mail-top">
+      <div class="ring">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42" class="ring-bg"/><circle cx="50" cy="50" r="42" class="ring-fg" id="mailRing"/></svg>
+        <div class="ring-num"><b id="mailCount">–</b><span>封未讀</span></div>
       </div>
-      <form class="bar" id="qform">
-        <input id="q" type="search" placeholder="例：保險法第64條 告知義務" autocomplete="off">
-        <button class="btn" id="qbtn" type="submit">搜尋</button>
-      </form>
-      <div class="answer" id="ans" hidden></div>
-      <div class="links" id="links"></div>
-    </section>
-  </div>
+      <a class="btn-ghost" href="https://mail.google.com/" target="_blank" rel="noopener">開啟 Gmail ↗</a>
+    </div>
+    <ul class="mail-list" id="mailList"></ul>
+  </section>
 
-  <div class="right">
-    <section class="panel">
-      <p class="eyebrow">Insurance Brief</p>
-      <h1>保險時事<small>AI 彙整資訊</small></h1>
-      <div class="news" id="news">
-        <article>
-          <div class="meta">2026-07-22 · 聯合新聞網</div>
-          <h3>金管會揭保險監理三方向：AI 轉型、綠色金融、全齡金融</h3>
-          <p>保險業接軌 IFRS 17 後，監理重點轉向推動 AI 科技轉型、引導綠色投資，並推廣微型保險以因應超高齡社會。 <a href="https://udn.com/news/story/7239/9644666" target="_blank" rel="noopener">原文</a></p>
-        </article>
-      </div>
-      <div class="row">
-        <button class="btn" id="brief">AI 彙整重點</button>
-      </div>
-      <p class="note" id="briefnote">AI 彙整依模型既有知識整理趨勢，非即時新聞，請以原文為準。</p>
-    </section>
+  <!-- 客戶 / 人脈雷達 -->
+  <section class="panel p-clients" aria-labelledby="h-clients">
+    <header class="panel-head">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 14.3c2.6.2 4.4 1.9 5 4.7"/></svg>
+      <h2 id="h-clients">客戶 / 人脈雷達</h2>
+      <span class="tag" id="clientTag">範例</span>
+    </header>
+    <div class="radar-row">
+      <canvas id="radar" class="radar" width="200" height="200" aria-label="未來 30 天生日分布"></canvas>
+      <ul class="stat-list" id="clientStats"></ul>
+    </div>
+    <div class="row-actions">
+      <label class="btn-ghost" for="csvInput">匯入客戶 CSV</label>
+      <input type="file" id="csvInput" accept=".csv,text/csv" hidden>
+      <span class="hint" id="csvHint">資料只存在這台瀏覽器</span>
+    </div>
+  </section>
 
-    <section class="panel">
-      <p class="eyebrow">Rates · 臺灣銀行牌告</p>
-      <div class="rates">
-        <div class="rate"><span class="k">美元即期匯率（買入／賣出）</span><span class="v">32.345 / 32.495</span><span class="s">掛牌 2026/10/29 03:02</span></div>
-        <div class="rate"><span class="k">台幣一年期定存</span><span class="v">1.700%</span><span class="s">固定利率，一般金額；機動 1.690%</span></div>
-        <div class="rate"><span class="k">美金一年期定存</span><span class="v">2.05%</span><span class="s">牌告利率，資料日期 2026/10/28</span></div>
-      </div>
-      <p class="note">實際以承作當日銀行公告為準。<a href="https://rate.bot.com.tw/xrt?lang=zh-TW" target="_blank" rel="noopener">查看最新匯率</a></p>
-    </section>
-  </div>
-</div>
+  <!-- 金流 / 帳務 -->
+  <section class="panel p-finance" aria-labelledby="h-finance">
+    <header class="panel-head">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+      <h2 id="h-finance">金流 / 帳務</h2>
+    </header>
+    <ul class="rate-list">
+      <li><span class="k">美元 / 台幣</span><span class="v" id="fxUsd">–</span><span class="s" id="fxNote">市場中價，載入中…</span></li>
+      <li><span class="k">台幣一年期定存</span><span class="v">1.700%</span><span class="s">臺銀固定利率・2026/10/29 牌告</span></li>
+      <li><span class="k">美金一年期定存</span><span class="v">2.05%</span><span class="s">臺銀牌告・2026/10/28</span></li>
+    </ul>
+    <a class="more" href="https://rate.bot.com.tw/xrt?lang=zh-TW" target="_blank" rel="noopener">臺銀最新牌告 ↗</a>
+  </section>
+</main>
 </body>
 </html>
