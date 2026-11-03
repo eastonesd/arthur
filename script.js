@@ -107,7 +107,9 @@
   const hasPeopleData = () => clientSource().length > 0 || state.people.length > 0;
   function everyone() {
     if (!hasPeopleData()) return SAMPLE_PEOPLE;
-    return [...clientSource().map((c) => ({ ...c, group: "客戶" })), ...state.people];
+    // 生日簿裡已有的人，以生日簿的分類為準（例如東石系統裡的下屬歸為朋友）
+    const own = new Set(state.people.map((p) => p.name));
+    return [...clientSource().filter((c) => !own.has(c.name)).map((c) => ({ ...c, group: "客戶" })), ...state.people];
   }
   const todaysBirthdays = () => everyone().filter((c) => daysUntilBirthday(c.birthday) === 0);
 
