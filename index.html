@@ -4,11 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>JARVIS</title>
+<meta name="theme-color" content="#03060d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JARVIS">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="style.css">
 <script src="config.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.76.1/dist/umd/supabase.js" defer></script>
 <script src="script.js" defer></script>
 </head>
 <body>
@@ -16,13 +24,14 @@
 
 <header class="topbar">
   <div class="brand">
-    <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17" /><circle cx="20" cy="20" r="10" /><circle cx="20" cy="20" r="3.5" class="dot" /></svg>
+    <img class="brand-mark" src="assets/icon-192.png" alt="" width="40" height="40">
     <span class="brand-name">JARVIS</span>
   </div>
   <div class="topbar-right">
     <span class="date" id="date">----/--/--</span>
     <span class="time" id="time">--:--</span>
-    <button class="btn-link" id="backupBtn" type="button">備份</button>
+    <button class="btn-link" id="installBtn" type="button" hidden>安裝 App</button>
+    <button class="btn-link" id="syncBtn" type="button">登入同步</button>
     <button class="btn-link" id="googleBtn" type="button">連接 Google</button>
   </div>
 </header>
@@ -34,6 +43,7 @@
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
       <h2 id="h-agenda">今日指揮中心</h2>
       <span class="tag" id="agendaTag">範例</span>
+      <button class="head-btn" id="openAgenda" type="button">登打</button>
     </header>
     <div class="panel-body">
       <ol class="agenda" id="agenda"></ol>
@@ -103,6 +113,20 @@
   </section>
 </main>
 
+<!-- 行程登打 -->
+<dialog class="dlg" id="dlgAgenda" aria-labelledby="da-title">
+  <div class="dlg-head"><h3 id="da-title">行程登打</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
+  <form class="add-row" id="agendaForm" autocomplete="off">
+    <input id="aDate" type="date" required aria-label="日期">
+    <input id="aTime" type="time" aria-label="時間（空白為全天）">
+    <input id="aTitle" placeholder="要做什麼，例：拜訪 王先生" required>
+    <input id="aWhere" placeholder="地點（選填）">
+    <button class="btn" type="submit">新增</button>
+  </form>
+  <p class="hint">時間留空代表全天。</p>
+  <ul class="edit-list" id="agendaList"></ul>
+</dialog>
+
 <!-- 生日簿 -->
 <dialog class="dlg" id="dlgPeople" aria-labelledby="dp-title">
   <div class="dlg-head"><h3 id="dp-title">生日簿</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
@@ -151,16 +175,37 @@
   </div>
 </dialog>
 
-<!-- 備份 -->
-<dialog class="dlg" id="dlgBackup" aria-labelledby="db-title">
-  <div class="dlg-head"><h3 id="db-title">備份與還原</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
-  <p class="dlg-text">生日簿、匯入的客戶與金流資料都只存在這個瀏覽器。換電腦或手機時，先在這裡下載備份，再到新裝置還原。</p>
+<!-- 資料同步 -->
+<dialog class="dlg" id="dlgSync" aria-labelledby="ds-title">
+  <div class="dlg-head"><h3 id="ds-title">資料同步</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
+  <section class="sync-box" id="syncOut">
+    <p class="dlg-text">用東石系統的帳號登入後，行程、生日簿與金流會存到 Supabase，電腦和手機看到同一份資料；客戶生日也會直接讀東石系統。</p>
+    <form class="add-row" id="loginForm" autocomplete="on">
+      <input id="lEmail" type="email" placeholder="Email" autocomplete="username" required>
+      <input id="lPass" type="password" placeholder="密碼" autocomplete="current-password" required>
+      <button class="btn" type="submit">登入</button>
+    </form>
+  </section>
+  <section class="sync-box" id="syncIn" hidden>
+    <p class="dlg-text">已登入 <b id="syncWho"></b></p>
+    <p class="hint" id="syncState"></p>
+    <div class="dlg-foot"><button class="btn-ghost" id="syncNow" type="button">立即同步</button><button class="btn-text" id="logoutBtn" type="button">登出</button></div>
+  </section>
+  <p class="form-msg" id="syncMsg"></p>
+  <h4 class="sub">本機備份</h4>
+  <p class="dlg-text">沒登入時，資料只存在這個瀏覽器。可以下載備份檔，到別台裝置還原。</p>
   <div class="dlg-foot">
-    <button class="btn" id="exportBtn" type="button">下載備份</button>
+    <button class="btn-ghost" id="exportBtn" type="button">下載備份</button>
     <label class="btn-ghost" for="restoreInput">從備份還原</label>
     <input type="file" id="restoreInput" accept=".json,application/json" hidden>
     <span class="hint" id="backupHint"></span>
   </div>
+</dialog>
+
+<!-- 安裝說明（iPhone） -->
+<dialog class="dlg" id="dlgInstall" aria-labelledby="di-title">
+  <div class="dlg-head"><h3 id="di-title">安裝到主畫面</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
+  <p class="dlg-text">iPhone / iPad：用 Safari 開啟本頁，點下方「分享」按鈕，選「加入主畫面」。</p>
 </dialog>
 </body>
 </html>

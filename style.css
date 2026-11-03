@@ -36,8 +36,7 @@ a{color:var(--cyan)}
   padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px));
   border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(10,24,44,.8),rgba(10,24,44,0))}
 .brand{display:flex;align-items:center;gap:12px}
-.brand-mark{width:32px;height:32px;fill:none;stroke:var(--cyan);stroke-width:1.6}
-.brand-mark .dot{fill:var(--gold);stroke:none}
+.brand-mark{width:42px;height:42px;object-fit:contain;filter:drop-shadow(0 0 6px rgba(245,180,58,.45));animation:spin 60s linear infinite}
 .brand-name{font:600 21px/1 var(--f-display);letter-spacing:.42em}
 .topbar-right{display:flex;align-items:center;gap:14px;font-family:var(--f-display);font-variant-numeric:tabular-nums}
 .date{color:var(--muted);font-size:14px}
@@ -198,6 +197,10 @@ a{color:var(--cyan)}
 .edit-list .empty-note{display:block;border:0}
 .edit-list .sum{color:var(--fg);font-weight:500}
 .dlg-foot{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:16px}
-.dlg-text{color:var(--muted);font-size:14px;margin:0;max-width:60ch}
+.dlg-text{color:var(--muted);font-size:14px;margin:0 0 12px;max-width:60ch}
+.dlg-text b{color:var(--fg)}
+.dlg .sub{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.dlg .hint{margin:8px 0 0}
+.btn-link.on .dot-live{display:inline-block}
 
-@media (prefers-reduced-motion:reduce){.core-img,.core-glow{animation:none}}
+@media (prefers-reduced-motion:reduce){.core-img,.core-glow,.brand-mark{animation:none}}

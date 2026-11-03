@@ -12,14 +12,23 @@
     get(k, fallback = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
-  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger" };
+  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda" };
+  const SYNCED = ["people", "ledger", "agenda"];    // 會同步到 Supabase 的資料
   const state = {
     events: null, mail: null, fx: null,
     clients: store.get(KEYS.clients),               // imported from 東石系統
     book: store.get(KEYS.book),                     // policy stats from 東石系統
     people: store.get(KEYS.people, []),             // typed in by hand
     ledger: store.get(KEYS.ledger, null),           // { items:[], fixed:[] }
+    agenda: store.get(KEYS.agenda, []),             // 手動登打的行程
+    cloudClients: null, cloudPolicies: null,        // 從東石系統（Supabase）讀到的客戶
   };
+  // 本機儲存 + 排程上傳雲端
+  function persist() {
+    SYNCED.forEach((k) => store.set(KEYS[k], state[k]));
+    store.set("jarvis.savedAt", Date.now());
+    cloud.schedulePush();
+  }
 
   /* ---------- clock ---------- */
   const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
@@ -94,10 +103,11 @@
     const d = new Date(), md = (off) => { const x = new Date(d); x.setDate(x.getDate() + off); return `1985-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
     return [["林小姐", 0], ["張先生", 3], ["黃太太", 6], ["吳先生", 12], ["李小姐", 21], ["陳先生", 27]].map(([name, o]) => ({ name, birthday: md(o), group: "客戶" }));
   })();
-  const hasPeopleData = () => !!(state.clients && state.clients.length) || state.people.length > 0;
+  const clientSource = () => state.cloudClients || state.clients || [];
+  const hasPeopleData = () => clientSource().length > 0 || state.people.length > 0;
   function everyone() {
     if (!hasPeopleData()) return SAMPLE_PEOPLE;
-    return [...(state.clients || []).map((c) => ({ ...c, group: "客戶" })), ...state.people];
+    return [...clientSource().map((c) => ({ ...c, group: "客戶" })), ...state.people];
   }
   const todaysBirthdays = () => everyone().filter((c) => daysUntilBirthday(c.birthday) === 0);
 
@@ -110,10 +120,11 @@
     const rows = [["今日生日", today], ["7 天內生日", week], ["30 天內生日", month]]
       .map(([k, arr]) => `<li><span class="k">${k}${arr.length ? `<small>${esc(names(arr))}</small>` : ""}</span><span class="v">${arr.length}</span></li>`);
     rows.push(`<li><span class="k">生日簿人數</span><span class="v">${list.length}</span></li>`);
-    if (state.book) rows.push(`<li><span class="k">有效保單<small>東石系統</small></span><span class="v">${state.book.policies}</span></li>`);
+    const policies = state.cloudPolicies ?? state.book?.policies;
+    if (policies != null) rows.push(`<li><span class="k">有效保單<small>東石系統</small></span><span class="v">${policies}</span></li>`);
     $("clientStats").innerHTML = rows.join("");
     const tag = $("clientTag");
-    tag.textContent = live ? "已登錄" : "範例"; tag.classList.toggle("live", live);
+    tag.textContent = state.cloudClients ? "東石系統" : live ? "已登錄" : "範例"; tag.classList.toggle("live", live);
     state.bdayWeek = week.length;
     drawRadar(list);
     renderAgenda();
@@ -146,7 +157,7 @@
       return `<li><span class="n">${esc(p.name)}<small>${esc(p.group)}</small></span><span class="m">${mdLabel(p.birthday)}${d === 0 ? "・今天" : `・${d} 天後`}</span><button class="del" type="button" data-del-person="${p.id}" aria-label="刪除 ${esc(p.name)}">刪除</button></li>`;
     }).join("") : `<li class="empty-note">還沒有手動登打的生日。</li>`;
     const n = (state.clients || []).length;
-    $("importHint").textContent = n ? `已匯入東石系統客戶 ${n} 位` : "";
+    $("importHint").textContent = state.cloudClients ? `已連線東石系統，客戶 ${state.cloudClients.length} 位` : n ? `已匯入東石系統客戶 ${n} 位` : "";
     $("clearImport").hidden = !n;
   }
   $("openPeople").addEventListener("click", () => { renderPeopleDialog(); open("dlgPeople"); $("pName").focus(); });
@@ -155,14 +166,14 @@
     const name = $("pName").value.trim(), birthday = normDate($("pBday").value);
     if (!birthday) { $("pMsg").textContent = "生日格式看不懂，請用 1990-05-12、民國 79/05/12 或 05/12。"; return; }
     state.people.push({ id: uid(), name, birthday, group: $("pGroup").value });
-    store.set(KEYS.people, state.people);
+    persist();
     $("pMsg").textContent = ""; $("pName").value = ""; $("pBday").value = ""; $("pName").focus();
     renderPeople();
   });
   $("peopleList").addEventListener("click", (e) => {
     const id = e.target.dataset.delPerson; if (!id) return;
     state.people = state.people.filter((p) => p.id !== id);
-    store.set(KEYS.people, state.people); renderPeople();
+    persist(); renderPeople();
   });
   $("clearImport").addEventListener("click", () => {
     state.clients = null; state.book = null;
@@ -249,9 +260,13 @@
     { time: "10:30", title: "王先生 保單檢視" }, { time: "14:00", title: "拜訪 陳小姐" },
     { time: "17:30", title: "寄出解約文件" }, { time: "20:00", title: "整理客戶資料" },
   ];
+  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   function renderAgenda() {
     const live = Array.isArray(state.events);
-    const events = live ? state.events : SAMPLE_EVENTS;
+    const manual = state.agenda.filter((a) => a.date === todayISO()).map((a) => ({ time: a.time || "全天", title: a.title, where: a.where }));
+    const useSample = !live && state.agenda.length === 0;
+    const events = [...(live ? state.events : useSample ? SAMPLE_EVENTS : []), ...manual]
+      .sort((a, b) => (a.time === "全天" ? "" : a.time).localeCompare(b.time === "全天" ? "" : b.time));
     const items = [...todaysBirthdays().map((c) => ({ time: "全天", title: `${c.name} 生日`, bday: true })), ...events];
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     const mins = (t) => /^\d\d:\d\d$/.test(t) ? +t.slice(0, 2) * 60 + +t.slice(3) : -1;
@@ -263,10 +278,34 @@
       return `<li class="${cls}"><span class="pin"></span><span class="t">${esc(e.time)}</span><span class="what">${esc(e.title)}${e.where ? `<small>${esc(e.where)}</small>` : ""}</span></li>`;
     }).join("") : `<li class="empty-note">今天沒有行程，先生可以喘口氣。</li>`;
     const tag = $("agendaTag");
-    tag.textContent = live ? "Google 日曆" : "範例"; tag.classList.toggle("live", live);
+    tag.textContent = live ? "Google 日曆" : useSample ? "範例" : "手動"; tag.classList.toggle("live", !useSample);
     state.agendaCount = events.length;
     renderSummary();
   }
+
+  /* 行程登打 dialog */
+  function renderAgendaDialog() {
+    const t = todayISO();
+    const list = state.agenda.filter((a) => a.date >= t).sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+    $("agendaList").innerHTML = list.length ? list.map((a) => {
+      const [, m, d] = a.date.split("-");
+      const day = a.date === t ? "今天" : `${+m}/${+d}`;
+      return `<li><span class="n">${esc(a.title)}${a.where ? `<small>${esc(a.where)}</small>` : ""}</span><span class="m">${day} ${a.time || "全天"}</span><button class="del" type="button" data-del-agenda="${a.id}" aria-label="刪除 ${esc(a.title)}">刪除</button></li>`;
+    }).join("") : `<li class="empty-note">還沒有手動登打的行程。</li>`;
+  }
+  $("openAgenda").addEventListener("click", () => { $("aDate").value = todayISO(); renderAgendaDialog(); open("dlgAgenda"); $("aTitle").focus(); });
+  $("agendaForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    state.agenda.push({ id: uid(), date: $("aDate").value, time: $("aTime").value, title: $("aTitle").value.trim(), where: $("aWhere").value.trim() });
+    state.agenda = state.agenda.filter((a) => a.date >= new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)); // 只留最近 30 天以後的
+    persist(); renderAgenda(); renderAgendaDialog();
+    $("aTitle").value = ""; $("aTime").value = ""; $("aWhere").value = ""; $("aTitle").focus();
+  });
+  $("agendaList").addEventListener("click", (e) => {
+    const id = e.target.dataset.delAgenda; if (!id) return;
+    state.agenda = state.agenda.filter((a) => a.id !== id);
+    persist(); renderAgenda(); renderAgendaDialog();
+  });
 
   /* ---------- 通訊中心 ---------- */
   const SAMPLE_MAIL = { unread: 12, items: [
@@ -350,7 +389,7 @@
   }
   function saveLedger(mut) {
     if (!state.ledger) state.ledger = { items: [], fixed: [] };
-    mut(state.ledger); store.set(KEYS.ledger, state.ledger); renderMoney();
+    mut(state.ledger); persist(); renderMoney();
   }
   $("openMoney").addEventListener("click", () => { renderMoneyDialog(); open("dlgMoney"); });
   $("balForm").addEventListener("submit", (e) => {
@@ -377,9 +416,9 @@
   }).catch(() => { $("fxUsd").textContent = "—"; });
 
   /* ---------- 備份與還原 ---------- */
-  $("backupBtn").addEventListener("click", () => { $("backupHint").textContent = ""; open("dlgBackup"); });
+  $("syncBtn").addEventListener("click", () => { $("backupHint").textContent = ""; $("syncMsg").textContent = ""; cloud.renderStatus(); open("dlgSync"); });
   $("exportBtn").addEventListener("click", () => {
-    const data = { app: "jarvis", version: 1, exported: new Date().toISOString(), clients: state.clients, book: state.book, people: state.people, ledger: state.ledger };
+    const data = { app: "jarvis", version: 1, exported: new Date().toISOString(), clients: state.clients, book: state.book, people: state.people, ledger: state.ledger, agenda: state.agenda };
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
     const d = new Date(); a.download = `jarvis-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
@@ -391,12 +430,104 @@
     try {
       const d = JSON.parse(await f.text());
       if (d.app !== "jarvis") throw new Error("這不是 JARVIS 的備份檔");
-      state.clients = d.clients || null; state.book = d.book || null; state.people = d.people || []; state.ledger = d.ledger || null;
-      Object.entries(KEYS).forEach(([k, key]) => store.set(key, state[k]));
-      renderPeople(); renderMoney();
+      state.clients = d.clients || null; state.book = d.book || null; state.people = d.people || []; state.ledger = d.ledger || null; state.agenda = d.agenda || [];
+      store.set(KEYS.clients, state.clients); store.set(KEYS.book, state.book);
+      persist(); renderPeople(); renderMoney();
       $("backupHint").textContent = "已還原。";
     } catch (err) { $("backupHint").textContent = `還原失敗：${err.message}`; }
     e.target.value = "";
+  });
+
+  /* ---------- Supabase 雲端同步 ---------- */
+  const cloud = (() => {
+    const sb = CFG.supabaseUrl && CFG.supabaseKey && window.supabase ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey) : null;
+    let user = null, timer = null, lastSync = null, busy = false;
+    const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    function renderStatus(msg) {
+      const b = $("syncBtn");
+      b.textContent = user ? (lastSync ? `已同步 ${fmtTime(lastSync)}` : "同步中…") : "登入同步";
+      b.classList.toggle("on", !!user);
+      $("syncOut").hidden = !!user; $("syncIn").hidden = !user;
+      if (user) {
+        $("syncWho").textContent = user.email;
+        $("syncState").textContent = lastSync ? `上次同步：${lastSync.toLocaleString("zh-TW", { hour12: false })}` : "尚未同步";
+      }
+      if (msg !== undefined) $("syncMsg").textContent = msg;
+    }
+    const snapshot = () => Object.fromEntries(SYNCED.map((k) => [k, state[k]]));
+    function apply(data) {
+      SYNCED.forEach((k) => { if (k in data) state[k] = data[k] ?? (k === "ledger" ? null : []); });
+      SYNCED.forEach((k) => store.set(KEYS[k], state[k]));
+      renderPeople(); renderMoney(); renderAgenda();
+    }
+    async function push() {
+      if (!user) return;
+      const { error } = await sb.from("jarvis_state").upsert({ owner: user.id, data: snapshot(), updated_at: new Date().toISOString() });
+      if (error) { renderStatus(`同步失敗：${error.message}`); return; }
+      lastSync = new Date(); renderStatus();
+    }
+    // 雲端與本機比較，較新的一方勝出
+    async function pull() {
+      if (!user || busy) return; busy = true;
+      try {
+        const { data, error } = await sb.from("jarvis_state").select("data, updated_at").eq("owner", user.id).maybeSingle();
+        if (error) throw error;
+        const localAt = store.get("jarvis.savedAt", 0), localHas = SYNCED.some((k) => Array.isArray(state[k]) ? state[k].length : !!state[k]);
+        if (!data) { if (localHas) await push(); else { lastSync = new Date(); renderStatus(); } }
+        else if (new Date(data.updated_at).getTime() >= localAt || !localHas) {
+          apply(data.data); store.set("jarvis.savedAt", new Date(data.updated_at).getTime()); lastSync = new Date(); renderStatus();
+        } else await push();
+      } catch (err) { renderStatus(`同步失敗：${err.message}`); }
+      finally { busy = false; }
+    }
+    // 東石系統的客戶（唯讀）
+    async function loadClients() {
+      if (!user) return;
+      const c = await sb.from("clients").select("name:data->>name, birthday:data->>birthday");
+      if (c.error) return;
+      state.cloudClients = (c.data || []).map((r) => ({ name: String(r.name || "").trim(), birthday: normDate(r.birthday) })).filter((r) => r.name && r.birthday);
+      const p = await sb.from("policies").select("id", { count: "exact", head: true });
+      state.cloudPolicies = p.error ? null : p.count;
+      renderPeople();
+    }
+    async function onUser(u) {
+      user = u || null;
+      if (!user) { state.cloudClients = null; state.cloudPolicies = null; lastSync = null; renderStatus(); renderPeople(); return; }
+      renderStatus(); await pull(); await loadClients();
+    }
+    if (sb) {
+      sb.auth.getSession().then(({ data }) => onUser(data.session?.user));
+      sb.auth.onAuthStateChange((evt, session) => { if (evt === "SIGNED_IN" || evt === "SIGNED_OUT") onUser(session?.user); });
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) { pull(); loadClients(); } });
+      setInterval(() => { pull(); }, 5 * 60000);
+    }
+    $("loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!sb) { renderStatus("無法載入 Supabase 元件，請檢查網路或 config.js。"); return; }
+      renderStatus("登入中…");
+      const { error } = await sb.auth.signInWithPassword({ email: $("lEmail").value.trim(), password: $("lPass").value });
+      if (error) renderStatus(error.message === "Invalid login credentials" ? "Email 或密碼不正確。" : `登入失敗：${error.message}`);
+      else { $("lPass").value = ""; renderStatus(""); }
+    });
+    $("logoutBtn").addEventListener("click", () => sb && sb.auth.signOut());
+    $("syncNow").addEventListener("click", async () => { await pull(); await loadClients(); });
+    return {
+      renderStatus,
+      schedulePush() { if (!user) return; clearTimeout(timer); timer = setTimeout(push, 1200); },
+    };
+  })();
+
+  /* ---------- 安裝成 App ---------- */
+  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  let installEvt = null;
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isIOS && !standalone) $("installBtn").hidden = false;
+  addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("installBtn").hidden = false; });
+  addEventListener("appinstalled", () => { $("installBtn").hidden = true; });
+  $("installBtn").addEventListener("click", async () => {
+    if (installEvt) { installEvt.prompt(); await installEvt.userChoice; installEvt = null; $("installBtn").hidden = true; }
+    else open("dlgInstall");
   });
 
   /* ---------- Google（Gmail + 日曆）---------- */

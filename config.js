@@ -7,9 +7,15 @@ window.JARVIS_CONFIG = {
   // 要讀取的 Google 日曆，"primary" 代表主要日曆
   calendarId: "primary",
 
+  // Supabase（與東石系統共用同一個專案）。
+  // publishable key 是公開金鑰，資料由資料表的 RLS 保護，可以放進 GitHub；
+  // 請勿放 service_role / secret key。
+  supabaseUrl: "https://kocyedkngpxckixtudku.supabase.co",
+  supabaseKey: "sb_publishable_n309GkhFeBRtg7thi9cSdQ_m6MiBpoU",
+
   // 今日指揮中心下方的生活提醒
   routines: [
-    { label: "吃飯", time: "12:00" },
-    { label: "洗澡", time: "22:30" }
+    { label: "午餐", time: "12:00" },
+    { label: "洗澡", time: "17:00" }
   ]
 };
