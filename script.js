@@ -5,11 +5,21 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const pad = (n) => String(n).padStart(2, "0");
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const money = (n) => Math.round(n).toLocaleString("zh-TW");
+  const num = (s) => { const v = parseFloat(String(s).replace(/[,\s，]/g, "")); return Number.isFinite(v) ? v : NaN; };
   const store = {
     get(k, fallback = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
-  const state = { events: null, clients: null, mail: null };
+  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger" };
+  const state = {
+    events: null, mail: null, fx: null,
+    clients: store.get(KEYS.clients),               // imported from 東石系統
+    book: store.get(KEYS.book),                     // policy stats from 東石系統
+    people: store.get(KEYS.people, []),             // typed in by hand
+    ledger: store.get(KEYS.ledger, null),           // { items:[], fixed:[] }
+  };
 
   /* ---------- clock ---------- */
   const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
@@ -48,43 +58,28 @@
     size(); addEventListener("resize", size); requestAnimationFrame(draw);
   })();
 
+  /* ---------- dialogs ---------- */
+  document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
+  document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (e) => { if (e.target === d) d.close(); }));
+  const open = (id) => { const d = $(id); if (d.showModal) d.showModal(); else d.setAttribute("open", ""); };
+
   /* ---------- routines ---------- */
   $("routines").innerHTML = CFG.routines.map((r) => `<span class="routine">${esc(r.label)} <b>${esc(r.time)}</b></span>`).join("");
 
-  /* ---------- 今日指揮中心 ---------- */
-  const SAMPLE_EVENTS = [
-    { time: "10:30", title: "王先生 保單檢視" },
-    { time: "14:00", title: "拜訪 陳小姐" },
-    { time: "17:30", title: "寄出解約文件" },
-    { time: "20:00", title: "整理客戶資料" },
-  ];
-  function renderAgenda() {
-    const live = Array.isArray(state.events);
-    const events = live ? state.events : SAMPLE_EVENTS;
-    const bdays = todaysBirthdays().map((c) => ({ time: "全天", title: `${c.name} 生日`, bday: true }));
-    const items = [...bdays, ...events];
-    const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes();
-    const mins = (t) => /^\d\d:\d\d$/.test(t) ? +t.slice(0, 2) * 60 + +t.slice(3) : -1;
-    let nextIdx = items.findIndex((e) => mins(e.time) >= nowMin);
-    $("agenda").innerHTML = items.length ? items.map((e, i) => {
-      const m = mins(e.time), cls = [e.bday ? "bday" : "", i === nextIdx ? "now" : "", m >= 0 && m < nowMin && i !== nextIdx ? "past" : ""].join(" ");
-      return `<li class="${cls}"><span class="pin"></span><span class="t">${esc(e.time)}</span><span class="what">${esc(e.title)}${e.where ? `<small>${esc(e.where)}</small>` : ""}</span></li>`;
-    }).join("") : `<li class="empty">今天沒有行程，先生可以喘口氣。</li>`;
-    const tag = $("agendaTag");
-    tag.textContent = live ? "Google 日曆" : "範例"; tag.classList.toggle("live", live);
-    state.agendaCount = events.length;
-    renderSummary();
+  /* ---------- dates ---------- */
+  function valid(y, mo, d) {
+    const t = new Date(y, mo - 1, d);
+    return t.getMonth() === mo - 1 && t.getDate() === d ? `${y}-${pad(mo)}-${pad(d)}` : null;
   }
-
-  /* ---------- 客戶 / 人脈雷達 ---------- */
-  const SAMPLE_CLIENTS = (() => {
-    const d = new Date(), md = (off) => { const x = new Date(d); x.setDate(x.getDate() + off); return `1985-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
-    return [
-      { name: "林小姐", birthday: md(0) }, { name: "張先生", birthday: md(3) }, { name: "黃太太", birthday: md(6) },
-      { name: "吳先生", birthday: md(12) }, { name: "李小姐", birthday: md(21) }, { name: "陳先生", birthday: md(27) },
-    ].map((c, i) => ({ ...c, lastContact: i % 2 ? null : "2026-08-01" }));
-  })();
-  function clients() { return state.clients || SAMPLE_CLIENTS; }
+  function normDate(s) {
+    s = String(s || "").trim(); if (!s) return null;
+    let m = /^(\d{2,4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/.exec(s);
+    if (!m && /^\d{7,8}$/.test(s)) m = [s, s.slice(0, s.length - 4), s.slice(-4, -2), s.slice(-2)];
+    if (m) { let y = +m[1]; if (y < 200) y += 1911; return valid(y, +m[2], +m[3]); } // 民國年 → 西元
+    m = /^(\d{1,2})[\/\-.月](\d{1,2})日?$/.exec(s);
+    if (m) return valid(2000, +m[1], +m[2]);      // 不知道年份時記成 2000 年
+    return null;
+  }
   function daysUntilBirthday(iso) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ""); if (!m) return null;
     const t = new Date(); t.setHours(0, 0, 0, 0);
@@ -92,47 +87,89 @@
     if (b < t) b = new Date(t.getFullYear() + 1, +m[2] - 1, +m[3]);
     return Math.round((b - t) / 86400000);
   }
-  function todaysBirthdays() { return clients().filter((c) => daysUntilBirthday(c.birthday) === 0); }
-  function renderClients() {
-    const list = clients(), live = !!state.clients;
-    const within = (n) => list.filter((c) => { const d = daysUntilBirthday(c.birthday); return d !== null && d <= n; });
-    const today = within(0), week = within(7);
-    const hasContact = list.some((c) => c.lastContact);
-    const stale = list.filter((c) => c.lastContact && (Date.now() - new Date(c.lastContact)) / 86400000 > 30);
+  const mdLabel = (iso) => iso.slice(0, 4) === "2000" ? `${+iso.slice(5, 7)}/${+iso.slice(8)}` : iso.replace(/-/g, "/");
+
+  /* ---------- people (imported + typed in) ---------- */
+  const SAMPLE_PEOPLE = (() => {
+    const d = new Date(), md = (off) => { const x = new Date(d); x.setDate(x.getDate() + off); return `1985-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`; };
+    return [["林小姐", 0], ["張先生", 3], ["黃太太", 6], ["吳先生", 12], ["李小姐", 21], ["陳先生", 27]].map(([name, o]) => ({ name, birthday: md(o), group: "客戶" }));
+  })();
+  const hasPeopleData = () => !!(state.clients && state.clients.length) || state.people.length > 0;
+  function everyone() {
+    if (!hasPeopleData()) return SAMPLE_PEOPLE;
+    return [...(state.clients || []).map((c) => ({ ...c, group: "客戶" })), ...state.people];
+  }
+  const todaysBirthdays = () => everyone().filter((c) => daysUntilBirthday(c.birthday) === 0);
+
+  function renderPeople() {
+    const list = everyone(), live = hasPeopleData();
+    const within = (n) => list.filter((c) => { const d = daysUntilBirthday(c.birthday); return d !== null && d <= n; })
+      .sort((a, b) => daysUntilBirthday(a.birthday) - daysUntilBirthday(b.birthday));
+    const today = within(0), week = within(7), month = within(30);
     const names = (arr) => arr.slice(0, 2).map((c) => c.name).join("、") + (arr.length > 2 ? "…" : "");
-    $("clientStats").innerHTML = [
-      `<li><span class="k">今日生日${today.length ? `<small>${esc(names(today))}</small>` : ""}</span><span class="v">${today.length}</span></li>`,
-      `<li><span class="k">7 天內生日${week.length ? `<small>${esc(names(week))}</small>` : ""}</span><span class="v">${week.length}</span></li>`,
-      hasContact ? `<li><span class="k">超過 30 天未聯絡</span><span class="v">${stale.length}</span></li>` : "",
-      `<li><span class="k">客戶總數</span><span class="v">${list.length}</span></li>`,
-    ].join("");
+    const rows = [["今日生日", today], ["7 天內生日", week], ["30 天內生日", month]]
+      .map(([k, arr]) => `<li><span class="k">${k}${arr.length ? `<small>${esc(names(arr))}</small>` : ""}</span><span class="v">${arr.length}</span></li>`);
+    rows.push(`<li><span class="k">生日簿人數</span><span class="v">${list.length}</span></li>`);
+    if (state.book) rows.push(`<li><span class="k">有效保單<small>東石系統</small></span><span class="v">${state.book.policies}</span></li>`);
+    $("clientStats").innerHTML = rows.join("");
     const tag = $("clientTag");
-    tag.textContent = live ? "已匯入" : "範例"; tag.classList.toggle("live", live);
+    tag.textContent = live ? "已登錄" : "範例"; tag.classList.toggle("live", live);
     state.bdayWeek = week.length;
     drawRadar(list);
     renderAgenda();
+    renderPeopleDialog();
   }
   function drawRadar(list) {
-    const cv = $("radar"), ctx = cv.getContext("2d"), dpr = Math.min(devicePixelRatio || 1, 2), S = 150;
+    const cv = $("radar"), S = cv.clientWidth || 150, ctx = cv.getContext("2d"), dpr = Math.min(devicePixelRatio || 1, 2);
     cv.width = S * dpr; cv.height = S * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const c = S / 2, R = S / 2 - 6;
     ctx.clearRect(0, 0, S, S);
     ctx.strokeStyle = "rgba(94,200,255,.28)"; ctx.lineWidth = 1;
     [1, .66, .33].forEach((f) => { ctx.beginPath(); ctx.arc(c, c, R * f, 0, 6.283); ctx.stroke(); });
     ctx.beginPath(); ctx.moveTo(c - R, c); ctx.lineTo(c + R, c); ctx.moveTo(c, c - R); ctx.lineTo(c, c + R); ctx.stroke();
-    // distance = days until birthday (0–30); angle = spread by name
-    list.forEach((cl, i) => {
-      const d = daysUntilBirthday(cl.birthday); if (d === null || d > 30) return;
-      const a = (i * 2.399) % 6.283, r = 10 + (R - 12) * d / 30;
-      const x = c + Math.cos(a) * r, y = c + Math.sin(a) * r, hot = d <= 7;
-      ctx.fillStyle = hot ? "#f5b43a" : "#5ec8ff";
-      ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
-      ctx.beginPath(); ctx.arc(x, y, hot ? 4 : 3, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0;
+    // distance from centre = days until birthday (0–30)
+    list.forEach((p, i) => {
+      const d = daysUntilBirthday(p.birthday); if (d === null || d > 30) return;
+      const a = (i * 2.399) % 6.283, r = 8 + (R - 10) * d / 30, hot = d <= 7;
+      ctx.fillStyle = hot ? "#f5b43a" : "#5ec8ff"; ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(c + Math.cos(a) * r, c + Math.sin(a) * r, hot ? 4 : 3, 0, 6.283); ctx.fill(); ctx.shadowBlur = 0;
     });
     ctx.fillStyle = "#f5b43a"; ctx.beginPath(); ctx.arc(c, c, 4, 0, 6.283); ctx.fill();
   }
+  if (window.ResizeObserver) new ResizeObserver(() => drawRadar(everyone())).observe($("radar"));
 
-  /* CSV import: needs a 姓名 column and a 生日 column; 最後聯絡 is optional */
+  /* 生日簿 dialog */
+  function renderPeopleDialog() {
+    const ps = [...state.people].sort((a, b) => daysUntilBirthday(a.birthday) - daysUntilBirthday(b.birthday));
+    $("peopleList").innerHTML = ps.length ? ps.map((p) => {
+      const d = daysUntilBirthday(p.birthday);
+      return `<li><span class="n">${esc(p.name)}<small>${esc(p.group)}</small></span><span class="m">${mdLabel(p.birthday)}${d === 0 ? "・今天" : `・${d} 天後`}</span><button class="del" type="button" data-del-person="${p.id}" aria-label="刪除 ${esc(p.name)}">刪除</button></li>`;
+    }).join("") : `<li class="empty-note">還沒有手動登打的生日。</li>`;
+    const n = (state.clients || []).length;
+    $("importHint").textContent = n ? `已匯入東石系統客戶 ${n} 位` : "";
+    $("clearImport").hidden = !n;
+  }
+  $("openPeople").addEventListener("click", () => { renderPeopleDialog(); open("dlgPeople"); $("pName").focus(); });
+  $("personForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = $("pName").value.trim(), birthday = normDate($("pBday").value);
+    if (!birthday) { $("pMsg").textContent = "生日格式看不懂，請用 1990-05-12、民國 79/05/12 或 05/12。"; return; }
+    state.people.push({ id: uid(), name, birthday, group: $("pGroup").value });
+    store.set(KEYS.people, state.people);
+    $("pMsg").textContent = ""; $("pName").value = ""; $("pBday").value = ""; $("pName").focus();
+    renderPeople();
+  });
+  $("peopleList").addEventListener("click", (e) => {
+    const id = e.target.dataset.delPerson; if (!id) return;
+    state.people = state.people.filter((p) => p.id !== id);
+    store.set(KEYS.people, state.people); renderPeople();
+  });
+  $("clearImport").addEventListener("click", () => {
+    state.clients = null; state.book = null;
+    store.set(KEYS.clients, null); store.set(KEYS.book, null); renderPeople();
+  });
+
+  /* 匯入：東石系統 clients.db（sql.js 讀 SQLite）或 CSV */
   function parseCSV(text) {
     const rows = []; let row = [], cell = "", q = false;
     for (let i = 0; i < text.length; i++) {
@@ -146,28 +183,17 @@
     if (cell || row.length) { row.push(cell); rows.push(row); }
     return rows.filter((r) => r.some((c) => c.trim()));
   }
-  function normDate(s) {
-    s = String(s || "").trim(); if (!s) return null;
-    let m = /^(\d{2,4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/.exec(s);
-    if (!m && /^\d{7,8}$/.test(s)) m = [s, s.slice(0, s.length - 4), s.slice(-4, -2), s.slice(-2)];
-    if (m) { let y = +m[1]; if (y < 200) y += 1911; return `${y}-${pad(m[2])}-${pad(m[3])}`; } // 民國年 → 西元
-    m = /^(\d{1,2})[\/\-.](\d{1,2})$/.exec(s);
-    if (m) return `2000-${pad(m[1])}-${pad(m[2])}`;
-    return null;
-  }
-  function importClients(text) {
+  function importCSV(text) {
     const rows = parseCSV(text.replace(/^\uFEFF/, ""));
     if (rows.length < 2) throw new Error("檔案裡沒有資料列");
     const head = rows[0].map((h) => h.trim().toLowerCase());
     const find = (...keys) => head.findIndex((h) => keys.some((k) => h.includes(k)));
-    const iName = find("姓名", "名字", "客戶", "name"), iBday = find("生日", "出生", "birth"), iLast = find("最後聯絡", "上次聯絡", "last");
+    const iName = find("姓名", "名字", "客戶", "name"), iBday = find("生日", "出生", "birth");
     if (iName < 0 || iBday < 0) throw new Error("找不到「姓名」或「生日」欄位");
-    const out = rows.slice(1).map((r) => ({ name: (r[iName] || "").trim(), birthday: normDate(r[iBday]), lastContact: iLast >= 0 ? normDate(r[iLast]) : null }))
-      .filter((c) => c.name && c.birthday);
+    const out = rows.slice(1).map((r) => ({ name: (r[iName] || "").trim(), birthday: normDate(r[iBday]) })).filter((c) => c.name && c.birthday);
     if (!out.length) throw new Error("生日欄位的日期格式無法辨識");
     return out;
   }
-  /* 東石系統 clients.db：瀏覽器內用 sql.js 直接讀 SQLite，只取姓名、生日與保單統計 */
   const SQLJS = "https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/";
   function loadSqlJs() {
     if (window.initSqlJs) return window.initSqlJs({ locateFile: (f) => SQLJS + f });
@@ -197,77 +223,181 @@
       return { list, book };
     } finally { db.close(); }
   }
-  $("csvInput").addEventListener("change", async (e) => {
+  $("importInput").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    const hint = $("csvHint");
+    const hint = $("importHint");
     hint.textContent = "匯入中…";
     try {
       const buf = await f.arrayBuffer();
-      const isSqlite = new TextDecoder("ascii").decode(buf.slice(0, 15)) === "SQLite format 3";
-      if (isSqlite) {
+      if (new TextDecoder("ascii").decode(buf.slice(0, 15)) === "SQLite format 3") {
         const { list, book } = await importDb(buf);
         if (!list.length) throw new Error("沒有可用的生日資料");
         state.clients = list; state.book = book;
       } else {
         let text = new TextDecoder("utf-8").decode(buf);
-        if (text.includes("�")) text = new TextDecoder("big5").decode(buf); // Excel 存成 Big5 的 CSV
-        state.clients = importClients(text); state.book = null;
+        if (text.includes("\uFFFD")) text = new TextDecoder("big5").decode(buf); // Excel 存成 Big5 的 CSV
+        state.clients = importCSV(text); state.book = null;
       }
-      store.set("jarvis.clients", state.clients);
-      store.set("jarvis.book", state.book);
-      hint.textContent = `已匯入 ${state.clients.length} 位客戶，只存在這台瀏覽器`;
-      renderClients(); renderBook();
+      store.set(KEYS.clients, state.clients); store.set(KEYS.book, state.book);
+      renderPeople();
     } catch (err) { hint.textContent = `匯入失敗：${err.message}`; }
     e.target.value = "";
   });
-  state.clients = store.get("jarvis.clients");
-  state.book = store.get("jarvis.book");
 
-  /* 金流 / 帳務：保單統計 */
-  function renderBook() {
-    const b = state.book, el = $("book");
-    if (!b) { el.hidden = true; return; }
-    const fmt = (n) => Math.round(n).toLocaleString("zh-TW");
-    const cur = Object.keys(b.premium).filter((c) => b.premium[c] > 0).sort((a, z) => (a === "TWD" ? -1 : z === "TWD" ? 1 : a.localeCompare(z)));
-    el.innerHTML = `<li><span class="k">有效保單</span><span class="v">${b.policies} 張</span><span class="s">東石系統・${(state.clients || []).length} 位客戶</span></li>` +
-      cur.map((c) => `<li><span class="k">保費總額（${esc(c)}）</span><span class="v">${c === "TWD" ? "NT$" : esc(c) + " "}${fmt(b.premium[c])}</span><span class="s">所有保單總保費加總</span></li>`).join("");
-    el.hidden = false;
+  /* ---------- 今日指揮中心 ---------- */
+  const SAMPLE_EVENTS = [
+    { time: "10:30", title: "王先生 保單檢視" }, { time: "14:00", title: "拜訪 陳小姐" },
+    { time: "17:30", title: "寄出解約文件" }, { time: "20:00", title: "整理客戶資料" },
+  ];
+  function renderAgenda() {
+    const live = Array.isArray(state.events);
+    const events = live ? state.events : SAMPLE_EVENTS;
+    const items = [...todaysBirthdays().map((c) => ({ time: "全天", title: `${c.name} 生日`, bday: true })), ...events];
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    const mins = (t) => /^\d\d:\d\d$/.test(t) ? +t.slice(0, 2) * 60 + +t.slice(3) : -1;
+    const nextIdx = items.findIndex((e) => mins(e.time) >= nowMin);
+    const el = $("agenda");
+    el.classList.toggle("has-items", items.length > 0);
+    el.innerHTML = items.length ? items.map((e, i) => {
+      const m = mins(e.time), cls = ["item", e.bday ? "bday" : "", i === nextIdx ? "now" : "", m >= 0 && m < nowMin && i !== nextIdx ? "past" : ""].join(" ");
+      return `<li class="${cls}"><span class="pin"></span><span class="t">${esc(e.time)}</span><span class="what">${esc(e.title)}${e.where ? `<small>${esc(e.where)}</small>` : ""}</span></li>`;
+    }).join("") : `<li class="empty-note">今天沒有行程，先生可以喘口氣。</li>`;
+    const tag = $("agendaTag");
+    tag.textContent = live ? "Google 日曆" : "範例"; tag.classList.toggle("live", live);
+    state.agendaCount = events.length;
+    renderSummary();
   }
 
   /* ---------- 通訊中心 ---------- */
-  const SAMPLE_MAIL = {
-    unread: 12,
-    items: [
-      { from: "王先生", subject: "保單資料補件", when: "08:42", important: true },
-      { from: "保險公司", subject: "契約審核通知", when: "昨天", important: false },
-      { from: "合作廠商", subject: "報價單已寄出，請確認", when: "11/01", important: false },
-    ],
-  };
+  const SAMPLE_MAIL = { unread: 12, items: [
+    { from: "王先生", subject: "保單資料補件", when: "08:42", important: true },
+    { from: "保險公司", subject: "契約審核通知", when: "昨天", important: false },
+    { from: "合作廠商", subject: "報價單已寄出，請確認", when: "11/01", important: false },
+  ] };
   function renderMail() {
     const live = !!state.mail, m = state.mail || SAMPLE_MAIL;
     $("mailCount").textContent = m.unread;
     $("mailRing").style.strokeDashoffset = 264 - 264 * Math.min(m.unread, 30) / 30;
     $("mailList").innerHTML = m.items.length ? m.items.map((x) =>
       `<li><span class="dot${x.important ? " imp" : ""}"></span><span class="from">${esc(x.from)}</span><span class="when">${esc(x.when)}</span><span class="subj">${esc(x.subject)}</span></li>`
-    ).join("") : `<li class="empty">收件匣已清空。</li>`;
+    ).join("") : `<li class="empty-note">收件匣沒有未讀信件。</li>`;
     const tag = $("mailTag");
     tag.textContent = live ? "Gmail" : "範例"; tag.classList.toggle("live", live);
     state.unread = m.unread;
     renderSummary();
   }
 
-  /* ---------- summary bar ---------- */
   function renderSummary() {
-    $("summary").innerHTML = `今日 <b>${state.agendaCount ?? "–"}</b> 個行程・<b>${state.bdayWeek ?? "–"}</b> 位客戶生日將至・<b>${state.unread ?? "–"}</b> 封未讀郵件`;
+    $("summary").innerHTML = `今日 <b>${state.agendaCount ?? "–"}</b> 個行程・<b>${state.bdayWeek ?? "–"}</b> 位生日將至・<b>${state.unread ?? "–"}</b> 封未讀郵件`;
   }
 
-  /* ---------- 金流 / 帳務：匯率 ---------- */
+  /* ---------- 金流 / 帳務 ---------- */
+  const SAMPLE_LEDGER = {
+    items: [
+      { id: "s1", kind: "asset", name: "活存", amount: 320000, cur: "TWD" },
+      { id: "s2", kind: "asset", name: "美元定存", amount: 10000, cur: "USD" },
+      { id: "s3", kind: "debt", name: "信用貸款", amount: 180000, cur: "TWD" },
+    ],
+    fixed: [
+      { id: "f1", dir: "in", name: "薪水", day: 10, amount: 52000 },
+      { id: "f2", dir: "out", name: "房租", day: 5, amount: 15000 },
+      { id: "f3", dir: "out", name: "信用卡", day: 12, amount: 12000 },
+      { id: "f4", dir: "out", name: "APP 訂閱", day: 6, amount: 1290 },
+    ],
+  };
+  const ledger = () => state.ledger || SAMPLE_LEDGER;
+  const toTWD = (amt, cur) => cur === "USD" ? amt * (state.fx || 32) : amt;
+  function nextDate(day) {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const at = (y, m) => new Date(y, m, Math.min(day, new Date(y, m + 1, 0).getDate()));
+    let d = at(t.getFullYear(), t.getMonth());
+    if (d < t) d = at(t.getFullYear(), t.getMonth() + 1);
+    return { date: d, left: Math.round((d - t) / 86400000) };
+  }
+  function renderMoney() {
+    const L = ledger(), live = !!state.ledger;
+    const assets = L.items.filter((i) => i.kind === "asset").reduce((s, i) => s + toTWD(i.amount, i.cur), 0);
+    const debts = L.items.filter((i) => i.kind === "debt").reduce((s, i) => s + toTWD(i.amount, i.cur), 0);
+    const hasUSD = L.items.some((i) => i.cur === "USD");
+    $("nw").textContent = L.items.length ? `NT$ ${money(assets - debts)}` : "–";
+    $("nwSub").textContent = L.items.length ? `資產 ${money(assets)}・負債 ${money(debts)}${hasUSD && !state.fx ? "・美元以 32 估算" : ""}` : "尚未登打資產負債";
+    const out = L.fixed.filter((f) => f.dir === "out").reduce((s, f) => s + f.amount, 0);
+    const inc = L.fixed.filter((f) => f.dir === "in").reduce((s, f) => s + f.amount, 0);
+    $("mOut").textContent = money(out); $("mIn").textContent = money(inc);
+    const due = L.fixed.map((f) => ({ ...f, ...nextDate(f.day) })).sort((a, b) => a.left - b.left);
+    $("due").innerHTML = due.length ? due.map((f) => {
+      const when = f.left === 0 ? "今天" : f.left === 1 ? "明天" : `${f.left} 天後`;
+      return `<li><span class="d">${f.date.getMonth() + 1}/${pad(f.date.getDate())}</span><span class="n">${esc(f.name)}<small>${when}</small></span><span class="a ${f.dir}">${f.dir === "out" ? "−" : "+"}${money(f.amount)}</span></li>`;
+    }).join("") : `<li class="empty-note">還沒有每月固定收支，按「登打」新增。</li>`;
+    const tag = $("moneyTag");
+    tag.textContent = live ? "已登打" : "範例"; tag.classList.toggle("live", live);
+    renderMoneyDialog();
+  }
+  function renderMoneyDialog() {
+    const L = state.ledger || { items: [], fixed: [] };
+    const groups = [["asset", "資產"], ["debt", "負債"]];
+    $("balList").innerHTML = L.items.length ? groups.map(([k, label]) => {
+      const rows = L.items.filter((i) => i.kind === k);
+      if (!rows.length) return "";
+      const sum = rows.reduce((s, i) => s + toTWD(i.amount, i.cur), 0);
+      return `<li><span class="n sum">${label}合計</span><span class="m">NT$ ${money(sum)}</span><span></span></li>` +
+        rows.map((i) => `<li><span class="n">${esc(i.name)}</span><span class="m">${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}</span><button class="del" type="button" data-del-item="${i.id}" aria-label="刪除 ${esc(i.name)}">刪除</button></li>`).join("");
+    }).join("") : `<li class="empty-note">例：活存、定存、股票、保單價值是資產；房貸、車貸、信貸是負債。</li>`;
+    const fx = [...L.fixed].sort((a, b) => a.day - b.day);
+    $("fixList").innerHTML = fx.length ? fx.map((f) =>
+      `<li><span class="n">每月 ${f.day} 號・${esc(f.name)}<small>${f.dir === "out" ? "支出" : "收入"}</small></span><span class="m ${f.dir}">${f.dir === "out" ? "−" : "+"}${money(f.amount)}</span><button class="del" type="button" data-del-fixed="${f.id}" aria-label="刪除 ${esc(f.name)}">刪除</button></li>`
+    ).join("") : `<li class="empty-note">例：房租 5 號、信用卡 12 號、薪水 10 號。</li>`;
+  }
+  function saveLedger(mut) {
+    if (!state.ledger) state.ledger = { items: [], fixed: [] };
+    mut(state.ledger); store.set(KEYS.ledger, state.ledger); renderMoney();
+  }
+  $("openMoney").addEventListener("click", () => { renderMoneyDialog(); open("dlgMoney"); });
+  $("balForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const amount = num($("bAmt").value); if (!(amount >= 0)) { $("bAmt").focus(); return; }
+    saveLedger((L) => L.items.push({ id: uid(), kind: $("bKind").value, name: $("bName").value.trim(), amount, cur: $("bCur").value }));
+    $("bName").value = ""; $("bAmt").value = ""; $("bName").focus();
+  });
+  $("fixForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const amount = num($("fAmt").value), day = parseInt($("fDay").value, 10);
+    if (!(amount >= 0) || !(day >= 1 && day <= 31)) return;
+    saveLedger((L) => L.fixed.push({ id: uid(), dir: $("fDir").value, name: $("fName").value.trim(), day, amount }));
+    $("fName").value = ""; $("fDay").value = ""; $("fAmt").value = ""; $("fName").focus();
+  });
+  $("balList").addEventListener("click", (e) => { const id = e.target.dataset.delItem; if (id) saveLedger((L) => { L.items = L.items.filter((i) => i.id !== id); }); });
+  $("fixList").addEventListener("click", (e) => { const id = e.target.dataset.delFixed; if (id) saveLedger((L) => { L.fixed = L.fixed.filter((f) => f.id !== id); }); });
+
   fetch("https://open.er-api.com/v6/latest/USD").then((r) => r.json()).then((j) => {
     if (j.result !== "success") throw new Error();
-    $("fxUsd").textContent = j.rates.TWD.toFixed(3);
-    const t = new Date(j.time_last_update_unix * 1000);
-    $("fxNote").textContent = `市場中價・${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())} 更新`;
-  }).catch(() => { $("fxNote").textContent = "匯率暫時無法取得"; });
+    state.fx = j.rates.TWD;
+    $("fxUsd").textContent = state.fx.toFixed(3);
+    renderMoney();
+  }).catch(() => { $("fxUsd").textContent = "—"; });
+
+  /* ---------- 備份與還原 ---------- */
+  $("backupBtn").addEventListener("click", () => { $("backupHint").textContent = ""; open("dlgBackup"); });
+  $("exportBtn").addEventListener("click", () => {
+    const data = { app: "jarvis", version: 1, exported: new Date().toISOString(), clients: state.clients, book: state.book, people: state.people, ledger: state.ledger };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const d = new Date(); a.download = `jarvis-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $("backupHint").textContent = "備份已下載。檔案含個人資料，請勿上傳到 GitHub。";
+  });
+  $("restoreInput").addEventListener("change", async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const d = JSON.parse(await f.text());
+      if (d.app !== "jarvis") throw new Error("這不是 JARVIS 的備份檔");
+      state.clients = d.clients || null; state.book = d.book || null; state.people = d.people || []; state.ledger = d.ledger || null;
+      Object.entries(KEYS).forEach(([k, key]) => store.set(key, state[k]));
+      renderPeople(); renderMoney();
+      $("backupHint").textContent = "已還原。";
+    } catch (err) { $("backupHint").textContent = `還原失敗：${err.message}`; }
+    e.target.value = "";
+  });
 
   /* ---------- Google（Gmail + 日曆）---------- */
   const SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
@@ -280,7 +410,6 @@
     if (!r.ok) throw new Error(`Google API ${r.status}`);
     return r.json();
   };
-
   async function loadCalendar() {
     const s = new Date(); s.setHours(0, 0, 0, 0);
     const e = new Date(s); e.setDate(e.getDate() + 1);
@@ -292,7 +421,6 @@
     });
     renderAgenda();
   }
-
   async function loadMail() {
     const label = await gapi("https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX");
     const list = await gapi("https://gmail.googleapis.com/gmail/v1/users/me/messages?" + new URLSearchParams({ q: "in:inbox is:unread", maxResults: "5" }));
@@ -303,7 +431,8 @@
       unread: label.messagesUnread ?? 0,
       items: msgs.map((m) => {
         const h = (n) => (m.payload?.headers || []).find((x) => x.name === n)?.value || "";
-        const from = h("From").replace(/<.*?>/, "").replace(/"/g, "").trim() || h("From");
+        const raw = h("From"), named = raw.replace(/<.*?>/, "").replace(/"/g, "").trim();
+        const from = named || raw.replace(/[<>]/g, "");
         const d = new Date(+m.internalDate);
         const when = d.toDateString() === today ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : d.toDateString() === yest ? "昨天" : `${d.getMonth() + 1}/${pad(d.getDate())}`;
         return { from, subject: h("Subject") || "（無主旨）", when, important: (m.labelIds || []).includes("IMPORTANT") };
@@ -311,17 +440,13 @@
     };
     renderMail();
   }
-
   function setBtn() {
     const b = $("googleBtn");
     if (!CFG.googleClientId) { b.textContent = "設定 Google"; b.title = "請先在 config.js 填入 googleClientId"; return; }
     b.textContent = token ? "Google 已連接" : "連接 Google";
     b.classList.toggle("on", !!token);
   }
-  async function refreshGoogle() {
-    if (!token) return;
-    await Promise.allSettled([loadCalendar(), loadMail()]);
-  }
+  async function refreshGoogle() { if (token) await Promise.allSettled([loadCalendar(), loadMail()]); }
   function loadGIS() {
     return new Promise((res, rej) => {
       if (window.google?.accounts?.oauth2) return res();
@@ -350,9 +475,9 @@
   /* ---------- boot ---------- */
   setBtn();
   renderMail();
-  renderClients();
-  renderBook();
+  renderPeople();
+  renderMoney();
   refreshGoogle();
-  setInterval(() => { renderAgenda(); }, 60000);          // 讓「下一個行程」高亮跟著時間走
-  setInterval(() => { refreshGoogle(); }, 5 * 60000);     // 每 5 分鐘更新 Gmail 與日曆
+  setInterval(renderAgenda, 60000);                 // 「下一個行程」高亮跟著時間走
+  setInterval(refreshGoogle, 5 * 60000);            // 每 5 分鐘更新 Gmail 與日曆
 })();

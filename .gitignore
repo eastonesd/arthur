@@ -2,3 +2,4 @@
 *.sqlite
 *.sqlite3
 *.csv
+jarvis-backup-*.json
