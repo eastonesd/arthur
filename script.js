@@ -167,20 +167,72 @@
     if (!out.length) throw new Error("生日欄位的日期格式無法辨識");
     return out;
   }
+  /* 東石系統 clients.db：瀏覽器內用 sql.js 直接讀 SQLite，只取姓名、生日與保單統計 */
+  const SQLJS = "https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/";
+  function loadSqlJs() {
+    if (window.initSqlJs) return window.initSqlJs({ locateFile: (f) => SQLJS + f });
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = SQLJS + "sql-wasm.js";
+      s.onload = () => res(window.initSqlJs({ locateFile: (f) => SQLJS + f }));
+      s.onerror = () => rej(new Error("無法載入 SQLite 讀取元件"));
+      document.head.appendChild(s);
+    });
+  }
+  async function importDb(buf) {
+    const SQL = await loadSqlJs();
+    const db = new SQL.Database(new Uint8Array(buf));
+    try {
+      const all = (sql) => { const r = db.exec(sql)[0]; return r ? r.values : []; };
+      const tables = all("select name from sqlite_master where type='table'").map((r) => r[0]);
+      if (!tables.includes("clients")) throw new Error("資料庫裡沒有 clients 資料表");
+      const list = all("select name, birthday from clients").map(([name, b]) => ({ name: String(name || "").trim(), birthday: normDate(b) }))
+        .filter((c) => c.name && c.birthday);
+      let book = null;
+      if (tables.includes("policies")) {
+        book = { policies: 0, premium: {} };
+        all("select coalesce(currency,'TWD'), count(*), coalesce(sum(total_premium),0) from policies where client_id in (select id from clients) group by 1")
+          .forEach(([cur, n, sum]) => { book.policies += n; book.premium[cur] = sum; });
+      }
+      return { list, book };
+    } finally { db.close(); }
+  }
   $("csvInput").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    const buf = await f.arrayBuffer();
-    let text = new TextDecoder("utf-8").decode(buf);
-    if (text.includes("\uFFFD")) text = new TextDecoder("big5").decode(buf); // Excel 存成 Big5 的 CSV
+    const hint = $("csvHint");
+    hint.textContent = "匯入中…";
     try {
-      state.clients = importClients(text);
+      const buf = await f.arrayBuffer();
+      const isSqlite = new TextDecoder("ascii").decode(buf.slice(0, 15)) === "SQLite format 3";
+      if (isSqlite) {
+        const { list, book } = await importDb(buf);
+        if (!list.length) throw new Error("沒有可用的生日資料");
+        state.clients = list; state.book = book;
+      } else {
+        let text = new TextDecoder("utf-8").decode(buf);
+        if (text.includes("�")) text = new TextDecoder("big5").decode(buf); // Excel 存成 Big5 的 CSV
+        state.clients = importClients(text); state.book = null;
+      }
       store.set("jarvis.clients", state.clients);
-      $("csvHint").textContent = `已匯入 ${state.clients.length} 位客戶，只存在這台瀏覽器`;
-      renderClients();
-    } catch (err) { $("csvHint").textContent = `匯入失敗：${err.message}`; }
+      store.set("jarvis.book", state.book);
+      hint.textContent = `已匯入 ${state.clients.length} 位客戶，只存在這台瀏覽器`;
+      renderClients(); renderBook();
+    } catch (err) { hint.textContent = `匯入失敗：${err.message}`; }
     e.target.value = "";
   });
   state.clients = store.get("jarvis.clients");
+  state.book = store.get("jarvis.book");
+
+  /* 金流 / 帳務：保單統計 */
+  function renderBook() {
+    const b = state.book, el = $("book");
+    if (!b) { el.hidden = true; return; }
+    const fmt = (n) => Math.round(n).toLocaleString("zh-TW");
+    const cur = Object.keys(b.premium).filter((c) => b.premium[c] > 0).sort((a, z) => (a === "TWD" ? -1 : z === "TWD" ? 1 : a.localeCompare(z)));
+    el.innerHTML = `<li><span class="k">有效保單</span><span class="v">${b.policies} 張</span><span class="s">東石系統・${(state.clients || []).length} 位客戶</span></li>` +
+      cur.map((c) => `<li><span class="k">保費總額（${esc(c)}）</span><span class="v">${c === "TWD" ? "NT$" : esc(c) + " "}${fmt(b.premium[c])}</span><span class="s">所有保單總保費加總</span></li>`).join("");
+    el.hidden = false;
+  }
 
   /* ---------- 通訊中心 ---------- */
   const SAMPLE_MAIL = {
@@ -299,6 +351,7 @@
   setBtn();
   renderMail();
   renderClients();
+  renderBook();
   refreshGoogle();
   setInterval(() => { renderAgenda(); }, 60000);          // 讓「下一個行程」高亮跟著時間走
   setInterval(() => { refreshGoogle(); }, 5 * 60000);     // 每 5 分鐘更新 Gmail 與日曆

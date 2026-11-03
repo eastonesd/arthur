@@ -146,5 +146,7 @@ a{color:var(--cyan)}
 .rate-list .v{font:600 22px/1.1 var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;text-align:right}
 .rate-list .s{grid-column:1/-1;font-size:12px;color:var(--muted)}
 .more{display:inline-block;margin-top:12px;font-size:13px}
+.rate-list.book{margin-top:6px;border-top:1px solid var(--line-strong)}
+.rate-list.book .v{color:var(--cyan)}
 
 @media (prefers-reduced-motion:reduce){.core-img,.core-glow{animation:none}}

@@ -76,8 +76,8 @@
       <ul class="stat-list" id="clientStats"></ul>
     </div>
     <div class="row-actions">
-      <label class="btn-ghost" for="csvInput">匯入客戶 CSV</label>
-      <input type="file" id="csvInput" accept=".csv,text/csv" hidden>
+      <label class="btn-ghost" for="csvInput">匯入客戶資料</label>
+      <input type="file" id="csvInput" accept=".db,.sqlite,.sqlite3,.csv,text/csv" hidden>
       <span class="hint" id="csvHint">資料只存在這台瀏覽器</span>
     </div>
   </section>
@@ -93,6 +93,7 @@
       <li><span class="k">台幣一年期定存</span><span class="v">1.700%</span><span class="s">臺銀固定利率・2026/10/29 牌告</span></li>
       <li><span class="k">美金一年期定存</span><span class="v">2.05%</span><span class="s">臺銀牌告・2026/10/28</span></li>
     </ul>
+    <ul class="rate-list book" id="book" hidden></ul>
     <a class="more" href="https://rate.bot.com.tw/xrt?lang=zh-TW" target="_blank" rel="noopener">臺銀最新牌告 ↗</a>
   </section>
 </main>
