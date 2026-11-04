@@ -379,7 +379,7 @@
     $("mailCount").textContent = m.unread;
     $("mailRing").style.strokeDashoffset = 264 - 264 * Math.min(m.unread, 30) / 30;
     $("mailList").innerHTML = m.items.length ? m.items.map((x) =>
-      `<li><span class="dot${x.important ? " imp" : ""}"></span><span class="from">${esc(x.from)}</span><span class="when">${esc(x.when)}</span><span class="subj">${esc(x.subject)}</span></li>`
+      `<li><span class="dot${x.important ? " imp" : ""}"></span><span class="from">${x.acct ? `<em class="acct">${esc(x.acct)}</em>` : ""}${esc(x.from)}</span><span class="when">${esc(x.when)}</span><span class="subj">${esc(x.subject)}</span></li>`
     ).join("") : `<li class="empty-note">收件匣沒有未讀信件。</li>`;
     const tag = $("mailTag");
     tag.textContent = live ? "Gmail" : "範例"; tag.classList.toggle("live", live);
@@ -611,14 +611,21 @@
     else open("dlgInstall");
   });
 
-  /* ---------- Google（Gmail + 日曆）---------- */
+  /* ---------- Google（Gmail + 日曆），可同時連接多個帳號 ---------- */
   const SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
-  let tokenClient = null, token = null;
-  try { const t = JSON.parse(sessionStorage.getItem("jarvis.gtoken") || "null"); if (t && t.exp > Date.now()) token = t; } catch { /* ignore */ }
+  const ACCT_KEY = "jarvis.gaccounts";
+  let tokenClient = null;
+  // [{ email, access_token, exp }]；token 只放 sessionStorage，關掉瀏覽器就失效
+  let accounts = (() => { try { return JSON.parse(sessionStorage.getItem(ACCT_KEY) || "[]"); } catch { return []; } })();
+  // 記住連過哪些信箱，下次一鍵重新連接
+  let known = store.get("jarvis.gemails", []);
+  const live = () => accounts.filter((a) => a.exp > Date.now());
+  const saveAccounts = () => { try { sessionStorage.setItem(ACCT_KEY, JSON.stringify(accounts)); } catch {} store.set("jarvis.gemails", known); };
+  const tagOf = (email) => email.split("@")[0];
 
-  const gapi = async (url) => {
-    const r = await fetch(url, { headers: { Authorization: `Bearer ${token.access_token}` } });
-    if (r.status === 401) { token = null; try { sessionStorage.removeItem("jarvis.gtoken"); } catch {} setBtn(); throw new Error("登入已過期"); }
+  const gapi = async (acct, url) => {
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${acct.access_token}` } });
+    if (r.status === 401) { acct.exp = 0; saveAccounts(); setBtn(); throw new Error("登入已過期"); }
     if (!r.ok) throw new Error(`Google API ${r.status}`);
     return r.json();
   };
@@ -626,31 +633,43 @@
     const s = new Date(); s.setHours(0, 0, 0, 0);
     const e = new Date(s); e.setDate(e.getDate() + 1);
     const q = new URLSearchParams({ timeMin: s.toISOString(), timeMax: e.toISOString(), singleEvents: "true", orderBy: "startTime", maxResults: "20" });
-    const j = await gapi(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CFG.calendarId)}/events?${q}`);
-    state.events = (j.items || []).map((ev) => {
-      const st = ev.start?.dateTime ? new Date(ev.start.dateTime) : null;
-      return { time: st ? `${pad(st.getHours())}:${pad(st.getMinutes())}` : "全天", title: ev.summary || "（無標題）", where: ev.location || "" };
+    const results = await Promise.allSettled(live().map((a) => gapi(a, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CFG.calendarId)}/events?${q}`)));
+    const seen = new Set(), events = [];
+    results.forEach((r) => { if (r.status !== "fulfilled") return;
+      (r.value.items || []).forEach((ev) => {
+        const st = ev.start?.dateTime ? new Date(ev.start.dateTime) : null;
+        const item = { time: st ? `${pad(st.getHours())}:${pad(st.getMinutes())}` : "全天", title: ev.summary || "（無標題）", where: ev.location || "" };
+        const k = item.time + item.title; if (!seen.has(k)) { seen.add(k); events.push(item); }
+      });
     });
+    if (!results.some((r) => r.status === "fulfilled")) return;
+    state.events = events.sort((a, b) => (a.time === "全天" ? "" : a.time).localeCompare(b.time === "全天" ? "" : b.time));
     // 今天的 Google 行程存一份到雲端，讓 LINE 推播也看得到
     const gcal = { date: todayISO(), events: state.events };
     if (JSON.stringify(gcal) !== JSON.stringify(state.gcal)) { state.gcal = gcal; persist(); }
     renderAgenda();
   }
-  async function loadMail() {
-    const label = await gapi("https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX");
-    const list = await gapi("https://gmail.googleapis.com/gmail/v1/users/me/messages?" + new URLSearchParams({ q: "in:inbox is:unread", maxResults: "5" }));
+  async function loadMailFor(acct) {
+    const label = await gapi(acct, "https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX");
+    const list = await gapi(acct, "https://gmail.googleapis.com/gmail/v1/users/me/messages?" + new URLSearchParams({ q: "in:inbox is:unread", maxResults: "5" }));
     const msgs = await Promise.all((list.messages || []).map((m) =>
-      gapi(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`)));
+      gapi(acct, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`)));
+    return { unread: label.messagesUnread ?? 0, msgs: msgs.map((m) => ({ ...m, acct: acct.email })) };
+  }
+  async function loadMail() {
+    const results = (await Promise.allSettled(live().map(loadMailFor))).filter((r) => r.status === "fulfilled").map((r) => r.value);
+    if (!results.length) return;
     const today = new Date().toDateString(), yest = new Date(Date.now() - 86400000).toDateString();
+    const multi = results.length > 1;
+    const all = results.flatMap((r) => r.msgs).sort((a, b) => +b.internalDate - +a.internalDate).slice(0, 6);
     state.mail = {
-      unread: label.messagesUnread ?? 0,
-      items: msgs.map((m) => {
+      unread: results.reduce((s, r) => s + r.unread, 0),
+      items: all.map((m) => {
         const h = (n) => (m.payload?.headers || []).find((x) => x.name === n)?.value || "";
         const raw = h("From"), named = raw.replace(/<.*?>/, "").replace(/"/g, "").trim();
-        const from = named || raw.replace(/[<>]/g, "");
         const d = new Date(+m.internalDate);
         const when = d.toDateString() === today ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : d.toDateString() === yest ? "昨天" : `${d.getMonth() + 1}/${pad(d.getDate())}`;
-        return { from, subject: h("Subject") || "（無主旨）", when, important: (m.labelIds || []).includes("IMPORTANT") };
+        return { from: named || raw.replace(/[<>]/g, ""), subject: h("Subject") || "（無主旨）", when, important: (m.labelIds || []).includes("IMPORTANT"), acct: multi ? tagOf(m.acct) : "" };
       }),
     };
     renderMail();
@@ -658,10 +677,19 @@
   function setBtn() {
     const b = $("googleBtn");
     if (!CFG.googleClientId) { b.textContent = "設定 Google"; b.title = "請先在 config.js 填入 googleClientId"; return; }
-    b.textContent = token ? "Google 已連接" : "連接 Google";
-    b.classList.toggle("on", !!token);
+    const n = live().length;
+    b.textContent = n > 1 ? `Google ${n} 個帳號` : n ? "Google 已連接" : "連接 Google";
+    b.classList.toggle("on", n > 0);
+    renderGoogleDialog();
   }
-  async function refreshGoogle() { if (token) await Promise.allSettled([loadCalendar(), loadMail()]); }
+  function renderGoogleDialog() {
+    const emails = [...new Set([...known, ...accounts.map((a) => a.email)])];
+    $("gList").innerHTML = emails.length ? emails.map((em) => {
+      const a = accounts.find((x) => x.email === em), ok = a && a.exp > Date.now();
+      return `<li><span class="n">${esc(em)}</span><span class="m ${ok ? "in" : ""}">${ok ? "已連接" : "未連接"}</span><span class="acts">${ok ? "" : `<button class="edit" type="button" data-g-connect="${esc(em)}">連接</button>`}<button class="del" type="button" data-g-remove="${esc(em)}">移除</button></span></li>`;
+    }).join("") : `<li class="empty-note">還沒有連接任何 Google 帳號。</li>`;
+  }
+  async function refreshGoogle() { if (live().length) await Promise.allSettled([loadCalendar(), loadMail()]); }
   function loadGIS() {
     return new Promise((res, rej) => {
       if (window.google?.accounts?.oauth2) return res();
@@ -670,22 +698,37 @@
       document.head.appendChild(s);
     });
   }
-  $("googleBtn").addEventListener("click", async () => {
-    if (!CFG.googleClientId) { alert("請先在 config.js 填入 Google OAuth 用戶端 ID（設定步驟見 README.md）。"); return; }
+  async function connect(hint) {
+    if (!CFG.googleClientId) { $("gMsg").textContent = "請先在 config.js 填入 Google OAuth 用戶端 ID（設定步驟見 README.md）。"; return; }
     try {
       await loadGIS();
       tokenClient = tokenClient || google.accounts.oauth2.initTokenClient({
         client_id: CFG.googleClientId, scope: SCOPES,
-        callback: (resp) => {
-          if (resp.error) return;
-          token = { access_token: resp.access_token, exp: Date.now() + (resp.expires_in - 60) * 1000 };
-          try { sessionStorage.setItem("jarvis.gtoken", JSON.stringify(token)); } catch {}
-          setBtn(); refreshGoogle();
+        callback: async (resp) => {
+          if (resp.error) { $("gMsg").textContent = "沒有完成授權。"; return; }
+          const acct = { access_token: resp.access_token, exp: Date.now() + (resp.expires_in - 60) * 1000, email: "" };
+          try { acct.email = (await gapi(acct, "https://gmail.googleapis.com/gmail/v1/users/me/profile")).emailAddress; }
+          catch { $("gMsg").textContent = "授權成功，但讀不到這個帳號的信箱。"; return; }
+          accounts = [...accounts.filter((a) => a.email !== acct.email), acct];
+          if (!known.includes(acct.email)) known.push(acct.email);
+          saveAccounts(); $("gMsg").textContent = `已連接 ${acct.email}`; setBtn(); refreshGoogle();
         },
       });
-      tokenClient.requestAccessToken({ prompt: token ? "" : "consent" });
-    } catch (err) { alert(err.message); }
+      // 新增帳號時讓使用者挑帳號；重新連接時直接帶入該信箱
+      tokenClient.requestAccessToken(hint ? { prompt: "", hint } : { prompt: "select_account consent" });
+    } catch (err) { $("gMsg").textContent = err.message; }
+  }
+  $("googleBtn").addEventListener("click", () => { $("gMsg").textContent = ""; renderGoogleDialog(); open("dlgGoogle"); });
+  $("gAdd").addEventListener("click", () => connect());
+  $("gList").addEventListener("click", (e) => {
+    const c = e.target.dataset.gConnect; if (c) return connect(c);
+    const r = e.target.dataset.gRemove; if (!r) return;
+    accounts = accounts.filter((a) => a.email !== r); known = known.filter((x) => x !== r);
+    saveAccounts(); setBtn();
+    if (!live().length) { state.mail = null; state.events = null; renderMail(); renderAgenda(); } else refreshGoogle();
   });
+  // 舊版只存一組 token 的，直接清掉
+  try { sessionStorage.removeItem("jarvis.gtoken"); } catch {}
 
   /* ---------- boot ---------- */
   setBtn();

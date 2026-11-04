@@ -135,6 +135,7 @@ a{color:var(--cyan)}
 .mail-list .dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);align-self:center}
 .mail-list .dot.imp{background:var(--gold)}
 .mail-list .from{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mail-list .acct{font:normal 500 11px/1 var(--f-display);color:var(--cyan);border:1px solid var(--line-strong);border-radius:4px;padding:2px 5px;margin-right:6px;vertical-align:1px}
 .mail-list .when{font:13px var(--f-display);color:var(--muted);font-variant-numeric:tabular-nums}
 .mail-list .subj{grid-column:2/-1;font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:420px){.mail-wrap{grid-template-columns:minmax(0,1fr)}.ring{margin:0 auto}}
