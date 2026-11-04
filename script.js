@@ -12,8 +12,8 @@
     get(k, fallback = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
-  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda" };
-  const SYNCED = ["people", "ledger", "agenda"];    // 會同步到 Supabase 的資料
+  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda", todos: "jarvis.todos", gcal: "jarvis.gcal" };
+  const SYNCED = ["people", "ledger", "agenda", "todos", "gcal"];    // 會同步到 Supabase 的資料
   const state = {
     events: null, mail: null, fx: null,
     clients: store.get(KEYS.clients),               // imported from 東石系統
@@ -21,6 +21,8 @@
     people: store.get(KEYS.people, []),             // typed in by hand
     ledger: store.get(KEYS.ledger, null),           // { items:[], fixed:[] }
     agenda: store.get(KEYS.agenda, []),             // 手動登打的行程
+    todos: store.get(KEYS.todos, []),               // 待辦
+    gcal: store.get(KEYS.gcal, null),               // 今天的 Google 日曆（給 LINE 推播用）
     cloudClients: null, cloudPolicies: null,        // 從東石系統（Supabase）讀到的客戶
   };
   // 本機儲存 + 排程上傳雲端
@@ -265,7 +267,7 @@
   const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
   function renderAgenda() {
     const live = Array.isArray(state.events);
-    const manual = state.agenda.filter((a) => a.date === todayISO()).map((a) => ({ time: a.time || "全天", title: a.title, where: a.where }));
+    const manual = state.agenda.filter((a) => a.date === todayISO()).map((a) => ({ id: a.id, time: a.time || "全天", title: a.title, where: a.where }));
     const useSample = !live && state.agenda.length === 0;
     const events = [...(live ? state.events : useSample ? SAMPLE_EVENTS : []), ...manual]
       .sort((a, b) => (a.time === "全天" ? "" : a.time).localeCompare(b.time === "全天" ? "" : b.time));
@@ -276,38 +278,95 @@
     const el = $("agenda");
     el.classList.toggle("has-items", items.length > 0);
     el.innerHTML = items.length ? items.map((e, i) => {
-      const m = mins(e.time), cls = ["item", e.bday ? "bday" : "", i === nextIdx ? "now" : "", m >= 0 && m < nowMin && i !== nextIdx ? "past" : ""].join(" ");
-      return `<li class="${cls}"><span class="pin"></span><span class="t">${esc(e.time)}</span><span class="what">${esc(e.title)}${e.where ? `<small>${esc(e.where)}</small>` : ""}</span></li>`;
+      const m = mins(e.time), cls = ["item", e.bday ? "bday" : "", e.id ? "editable" : "", i === nextIdx ? "now" : "", m >= 0 && m < nowMin && i !== nextIdx ? "past" : ""].join(" ");
+      return `<li class="${cls}"${e.id ? ` data-edit="${e.id}" title="點一下修改"` : ""}><span class="pin"></span><span class="t">${esc(e.time)}</span><span class="what">${esc(e.title)}${e.where ? `<small>${esc(e.where)}</small>` : ""}</span></li>`;
     }).join("") : `<li class="empty-note">今天沒有行程，先生可以喘口氣。</li>`;
     const tag = $("agendaTag");
     tag.textContent = live ? "Google 日曆" : useSample ? "範例" : "手動"; tag.classList.toggle("live", !useSample);
     state.agendaCount = events.length;
     renderSummary();
+    renderTodoMini();
   }
 
-  /* 行程登打 dialog */
+  /* 行程登打 dialog：新增、修改、刪除 */
+  let editingId = null;
+  const mdShort = (iso) => { const [, m, d] = iso.split("-"); return `${+m}/${+d}`; };
   function renderAgendaDialog() {
     const t = todayISO();
     const list = state.agenda.filter((a) => a.date >= t).sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-    $("agendaList").innerHTML = list.length ? list.map((a) => {
-      const [, m, d] = a.date.split("-");
-      const day = a.date === t ? "今天" : `${+m}/${+d}`;
-      return `<li><span class="n">${esc(a.title)}${a.where ? `<small>${esc(a.where)}</small>` : ""}</span><span class="m">${day} ${a.time || "全天"}</span><button class="del" type="button" data-del-agenda="${a.id}" aria-label="刪除 ${esc(a.title)}">刪除</button></li>`;
-    }).join("") : `<li class="empty-note">還沒有手動登打的行程。</li>`;
+    $("agendaList").innerHTML = list.length ? list.map((a) =>
+      `<li class="${a.id === editingId ? "editing" : ""}"><span class="n">${esc(a.title)}${a.where ? `<small>${esc(a.where)}</small>` : ""}</span><span class="m">${a.date === t ? "今天" : mdShort(a.date)} ${a.time || "全天"}</span><span class="acts"><button class="edit" type="button" data-edit-agenda="${a.id}">修改</button><button class="del" type="button" data-del-agenda="${a.id}" aria-label="刪除 ${esc(a.title)}">刪除</button></span></li>`
+    ).join("") : `<li class="empty-note">還沒有手動登打的行程。</li>`;
+    renderTodoDialog();
   }
-  $("openAgenda").addEventListener("click", () => { $("aDate").value = todayISO(); renderAgendaDialog(); open("dlgAgenda"); $("aTitle").focus(); });
+  function resetAgendaForm() {
+    editingId = null;
+    $("aDate").value = todayISO(); $("aTime").value = ""; $("aTitle").value = ""; $("aWhere").value = "";
+    $("aSubmit").textContent = "新增"; $("aCancel").hidden = true;
+  }
+  function startEdit(id) {
+    const a = state.agenda.find((x) => x.id === id); if (!a) return;
+    editingId = id;
+    $("aDate").value = a.date; $("aTime").value = a.time || ""; $("aTitle").value = a.title; $("aWhere").value = a.where || "";
+    $("aSubmit").textContent = "儲存修改"; $("aCancel").hidden = false;
+    renderAgendaDialog(); $("aTitle").focus();
+  }
+  function openAgendaDialog(editId) {
+    resetAgendaForm(); renderAgendaDialog(); open("dlgAgenda");
+    if (editId) startEdit(editId); else $("aTitle").focus();
+  }
+  $("openAgenda").addEventListener("click", () => openAgendaDialog());
+  $("agenda").addEventListener("click", (e) => { const li = e.target.closest("[data-edit]"); if (li) openAgendaDialog(li.dataset.edit); });
+  $("aCancel").addEventListener("click", () => { resetAgendaForm(); renderAgendaDialog(); });
   $("agendaForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    state.agenda.push({ id: uid(), date: $("aDate").value, time: $("aTime").value, title: $("aTitle").value.trim(), where: $("aWhere").value.trim() });
+    const item = { date: $("aDate").value, time: $("aTime").value, title: $("aTitle").value.trim(), where: $("aWhere").value.trim() };
+    if (editingId) state.agenda = state.agenda.map((a) => a.id === editingId ? { ...a, ...item } : a);
+    else state.agenda.push({ id: uid(), ...item });
     state.agenda = state.agenda.filter((a) => a.date >= new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)); // 只留最近 30 天以後的
-    persist(); renderAgenda(); renderAgendaDialog();
-    $("aTitle").value = ""; $("aTime").value = ""; $("aWhere").value = ""; $("aTitle").focus();
+    persist(); resetAgendaForm(); renderAgenda(); renderAgendaDialog(); $("aTitle").focus();
   });
   $("agendaList").addEventListener("click", (e) => {
+    const ed = e.target.dataset.editAgenda; if (ed) return startEdit(ed);
     const id = e.target.dataset.delAgenda; if (!id) return;
     state.agenda = state.agenda.filter((a) => a.id !== id);
+    if (editingId === id) resetAgendaForm();
     persist(); renderAgenda(); renderAgendaDialog();
   });
+
+  /* 待辦 */
+  const openTodoList = () => state.todos.filter((t) => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+  function renderTodoMini() {
+    const t = todayISO();
+    $("todoMini").innerHTML = openTodoList().slice(0, 5).map((x) =>
+      `<li><input type="checkbox" class="chk" data-done="${x.id}" aria-label="完成 ${esc(x.title)}"><span class="n">${esc(x.title)}</span><span class="due${x.due && x.due < t ? " late" : ""}">${x.due ? (x.due === t ? "今天" : mdShort(x.due)) : ""}</span></li>`).join("");
+  }
+  function renderTodoDialog() {
+    const t = todayISO();
+    const list = [...openTodoList(), ...state.todos.filter((x) => x.done)];
+    $("todoList").innerHTML = list.length ? list.map((x) =>
+      `<li class="todo${x.done ? " done" : ""}"><input type="checkbox" class="chk" data-done="${x.id}" ${x.done ? "checked" : ""} aria-label="完成 ${esc(x.title)}"><span class="n">${esc(x.title)}</span><span class="m">${x.due ? (x.due === t ? "今天" : mdShort(x.due)) : ""}</span><button class="del" type="button" data-del-todo="${x.id}" aria-label="刪除 ${esc(x.title)}">刪除</button></li>`
+    ).join("") : `<li class="empty-note">沒有待辦事項。</li>`;
+  }
+  function toggleTodo(id) {
+    state.todos = state.todos.map((x) => x.id === id ? { ...x, done: !x.done, doneAt: !x.done ? new Date().toISOString() : undefined } : x);
+    // 完成超過 7 天的自動清掉
+    state.todos = state.todos.filter((x) => !x.done || !x.doneAt || Date.now() - new Date(x.doneAt) < 7 * 86400000);
+    persist(); renderTodoMini(); renderTodoDialog();
+  }
+  $("todoForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    state.todos.push({ id: uid(), title: $("tTitle").value.trim(), due: $("tDue").value || "", done: false });
+    persist(); renderTodoMini(); renderTodoDialog();
+    $("tTitle").value = ""; $("tDue").value = ""; $("tTitle").focus();
+  });
+  $("todoList").addEventListener("click", (e) => {
+    if (e.target.dataset.done) return toggleTodo(e.target.dataset.done);
+    const id = e.target.dataset.delTodo; if (!id) return;
+    state.todos = state.todos.filter((x) => x.id !== id);
+    persist(); renderTodoMini(); renderTodoDialog();
+  });
+  $("todoMini").addEventListener("change", (e) => { if (e.target.dataset.done) toggleTodo(e.target.dataset.done); });
 
   /* ---------- 通訊中心 ---------- */
   const SAMPLE_MAIL = { unread: 12, items: [
@@ -418,9 +477,9 @@
   }).catch(() => { $("fxUsd").textContent = "—"; });
 
   /* ---------- 備份與還原 ---------- */
-  $("syncBtn").addEventListener("click", () => { $("backupHint").textContent = ""; $("syncMsg").textContent = ""; cloud.renderStatus(); open("dlgSync"); });
+  $("syncBtn").addEventListener("click", () => { $("backupHint").textContent = ""; $("syncMsg").textContent = ""; cloud.renderStatus(); cloud.lineStatus(); open("dlgSync"); });
   $("exportBtn").addEventListener("click", () => {
-    const data = { app: "jarvis", version: 1, exported: new Date().toISOString(), clients: state.clients, book: state.book, people: state.people, ledger: state.ledger, agenda: state.agenda };
+    const data = { app: "jarvis", version: 1, exported: new Date().toISOString(), clients: state.clients, book: state.book, people: state.people, ledger: state.ledger, agenda: state.agenda, todos: state.todos };
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
     const d = new Date(); a.download = `jarvis-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
@@ -432,7 +491,7 @@
     try {
       const d = JSON.parse(await f.text());
       if (d.app !== "jarvis") throw new Error("這不是 JARVIS 的備份檔");
-      state.clients = d.clients || null; state.book = d.book || null; state.people = d.people || []; state.ledger = d.ledger || null; state.agenda = d.agenda || [];
+      state.clients = d.clients || null; state.book = d.book || null; state.people = d.people || []; state.ledger = d.ledger || null; state.agenda = d.agenda || []; state.todos = d.todos || [];
       store.set(KEYS.clients, state.clients); store.set(KEYS.book, state.book);
       persist(); renderPeople(); renderMoney();
       $("backupHint").textContent = "已還原。";
@@ -458,9 +517,10 @@
     }
     const snapshot = () => Object.fromEntries(SYNCED.map((k) => [k, state[k]]));
     function apply(data) {
-      SYNCED.forEach((k) => { if (k in data) state[k] = data[k] ?? (k === "ledger" ? null : []); });
+      SYNCED.forEach((k) => { if (k in data) state[k] = data[k] ?? (k === "ledger" || k === "gcal" ? null : []); });
       SYNCED.forEach((k) => store.set(KEYS[k], state[k]));
       renderPeople(); renderMoney(); renderAgenda();
+      if ($("dlgAgenda").open) renderAgendaDialog();
     }
     async function push() {
       if (!user) return;
@@ -492,10 +552,29 @@
       state.cloudPolicies = p.error ? null : p.count;
       renderPeople();
     }
+    // J.A.R.V.I.S LINE 綁定
+    async function lineStatus() {
+      if (!user) return;
+      const { data } = await sb.from("jarvis_line_links").select("linked_at").eq("owner", user.id).maybeSingle();
+      $("lineState").textContent = data ? `已綁定（${new Date(data.linked_at).toLocaleDateString("zh-TW")}）` : "未綁定";
+      $("lineUnlink").hidden = !data;
+      $("lineCodeBtn").textContent = data ? "重新綁定" : "綁定 LINE";
+      if (data) $("lineCodeOut").hidden = true;
+    }
+    $("lineCodeBtn").addEventListener("click", async () => {
+      if (!user) return;
+      const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", buf = crypto.getRandomValues(new Uint8Array(8));
+      const code = Array.from(buf, (n) => abc[n % abc.length]).join("");
+      await sb.from("jarvis_link_codes").delete().eq("owner", user.id);
+      const { error } = await sb.from("jarvis_link_codes").insert({ code });
+      if (error) { renderStatus(`產生綁定碼失敗：${error.message}`); return; }
+      $("lineCode").textContent = code; $("lineCodeOut").hidden = false;
+    });
+    $("lineUnlink").addEventListener("click", async () => { await sb.from("jarvis_line_links").delete().eq("owner", user.id); lineStatus(); });
     async function onUser(u) {
       user = u || null;
       if (!user) { state.cloudClients = null; state.cloudPolicies = null; lastSync = null; renderStatus(); renderPeople(); return; }
-      renderStatus(); await pull(); await loadClients();
+      renderStatus(); await pull(); await loadClients(); lineStatus();
     }
     if (sb) {
       sb.auth.getSession().then(({ data }) => onUser(data.session?.user));
@@ -514,7 +593,7 @@
     $("logoutBtn").addEventListener("click", () => sb && sb.auth.signOut());
     $("syncNow").addEventListener("click", async () => { await pull(); await loadClients(); });
     return {
-      renderStatus,
+      renderStatus, lineStatus,
       schedulePush() { if (!user) return; clearTimeout(timer); timer = setTimeout(push, 1200); },
     };
   })();
@@ -552,6 +631,9 @@
       const st = ev.start?.dateTime ? new Date(ev.start.dateTime) : null;
       return { time: st ? `${pad(st.getHours())}:${pad(st.getMinutes())}` : "全天", title: ev.summary || "（無標題）", where: ev.location || "" };
     });
+    // 今天的 Google 行程存一份到雲端，讓 LINE 推播也看得到
+    const gcal = { date: todayISO(), events: state.events };
+    if (JSON.stringify(gcal) !== JSON.stringify(state.gcal)) { state.gcal = gcal; persist(); }
     renderAgenda();
   }
   async function loadMail() {

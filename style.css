@@ -198,6 +198,22 @@ a{color:var(--cyan)}
 .edit-list .empty-note{display:block;border:0}
 .edit-list .sum{color:var(--fg);font-weight:500}
 .dlg-foot{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:16px}
+.edit-list li.editing{background:var(--gold-soft)}
+.edit-list .acts{display:flex;gap:4px}
+.edit-list .edit{background:none;border:1px solid transparent;color:var(--cyan);border-radius:6px;cursor:pointer;padding:2px 8px}
+.edit-list .edit:hover{border-color:var(--line-strong)}
+.edit-list li.done .n{text-decoration:line-through;color:var(--muted)}
+.chk{width:18px;height:18px;accent-color:var(--gold);cursor:pointer;margin:0}
+.edit-list li.todo{grid-template-columns:auto minmax(0,1fr) auto auto}
+.code-out .code{display:inline-block;margin-top:8px;font:600 26px/1 var(--f-display);letter-spacing:.2em;color:var(--gold);user-select:all}
+.agenda li.item.editable{cursor:pointer}
+.agenda li.item.editable:hover .what{color:var(--cyan)}
+.todo-mini{list-style:none;margin:6px 0 0;padding:8px 0 0 6px;border-top:1px dashed var(--line);display:grid}
+.todo-mini:empty{display:none}
+.todo-mini li{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:5px 8px}
+.todo-mini .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.todo-mini .due{font:13px var(--f-display);color:var(--muted)}
+.todo-mini .due.late{color:var(--down)}
 .dlg-text{color:var(--muted);font-size:14px;margin:0 0 12px;max-width:60ch}
 .dlg-text b{color:var(--fg)}
 .dlg .sub{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}

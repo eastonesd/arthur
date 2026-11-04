@@ -51,6 +51,28 @@
 - **安裝成 App**：用 Chrome / Edge 開網頁，按右上角「安裝 App」（或網址列的安裝圖示）。iPhone 用 Safari →「分享」→「加入主畫面」。安裝後有自己的圖示，斷線也能開啟。
 - **下載原始碼**：GitHub repo 頁面 →「Code」→「Download ZIP」。本機開啟請用簡易伺服器（例如在資料夾內執行 `python -m http.server 8000`，再開 `http://localhost:8000`），直接雙擊 `index.html` 會無法登入 Google。
 
+## LINE 推播（J.A.R.V.I.S 官方帳號）
+
+後端是 Supabase Edge Function `jarvis-line`（原始碼在 `supabase/functions/jarvis-line/`），排程：
+
+| 時間（台北） | 內容 |
+|---|---|
+| 每天 08:00 | 早安簡報：行程數、客戶生日、3 天內到期款項、第一個行程時間、待辦；有壽星時附「好」按鈕，按下後產生生日祝福 |
+| 每 5 分鐘檢查 | 行程開始前一小時提醒（手動登打的行程，以及當天打開過儀表板時同步的 Google 日曆） |
+| 每天 21:00 | 今天到期或已逾期的待辦，可直接按按鈕打勾 |
+
+在 LINE 傳「今天」看簡報、「待辦」看未完成事項、「解除綁定」停止推播。
+
+設定步驟：
+
+1. 到 LINE Official Account Manager 建立官方帳號「J.A.R.V.I.S」，在「設定 → Messaging API」啟用。
+2. 到 LINE Developers 該 channel：複製 **Channel secret**；在 Messaging API 分頁發行 **Channel access token (long-lived)**。
+3. Webhook URL 填 `https://kocyedkngpxckixtudku.supabase.co/functions/v1/jarvis-line`，打開「Use webhook」。官方帳號後台把「自動回應訊息」關閉。
+4. Supabase 專案 → Edge Functions → Secrets 新增 `JARVIS_LINE_CHANNEL_SECRET`、`JARVIS_LINE_CHANNEL_ACCESS_TOKEN`；要用 AI 寫祝福再加 `ANTHROPIC_API_KEY`（沒有的話使用內建範本）。
+5. 加 J.A.R.V.I.S 好友 → 儀表板「登入同步」→「綁定 LINE」→ 把 8 碼綁定碼傳給官方帳號。
+
+LINE 免費方案每月 200 則推播；回覆訊息（「今天」「待辦」、祝福按鈕）不計入。
+
 ## 目前限制
 
 - **TimeTree**：官方已停止提供公開 API，無法直接串接。建議把行程放在 Google 日曆，或在 TimeTree 與 Google 日曆之間手動同步。

@@ -47,6 +47,7 @@
     </header>
     <div class="panel-body">
       <ol class="agenda" id="agenda"></ol>
+      <ul class="todo-mini" id="todoMini"></ul>
     </div>
     <div class="routines" id="routines"></div>
   </section>
@@ -115,16 +116,25 @@
 
 <!-- 行程登打 -->
 <dialog class="dlg" id="dlgAgenda" aria-labelledby="da-title">
-  <div class="dlg-head"><h3 id="da-title">行程登打</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
+  <div class="dlg-head"><h3 id="da-title">行程與待辦</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
+  <h4>行程</h4>
   <form class="add-row" id="agendaForm" autocomplete="off">
     <input id="aDate" type="date" required aria-label="日期">
     <input id="aTime" type="time" aria-label="時間（空白為全天）">
     <input id="aTitle" placeholder="要做什麼，例：拜訪 王先生" required>
     <input id="aWhere" placeholder="地點（選填）">
+    <button class="btn" type="submit" id="aSubmit">新增</button>
+    <button class="btn-text" type="button" id="aCancel" hidden>取消修改</button>
+  </form>
+  <p class="hint">時間留空代表全天。點清單的「修改」可以改內容。</p>
+  <ul class="edit-list" id="agendaList"></ul>
+  <h4 class="sub">待辦</h4>
+  <form class="add-row" id="todoForm" autocomplete="off">
+    <input id="tTitle" placeholder="待辦事項，例：寄出要保書" required>
+    <input id="tDue" type="date" aria-label="期限（選填）">
     <button class="btn" type="submit">新增</button>
   </form>
-  <p class="hint">時間留空代表全天。</p>
-  <ul class="edit-list" id="agendaList"></ul>
+  <ul class="edit-list" id="todoList"></ul>
 </dialog>
 
 <!-- 生日簿 -->
@@ -190,6 +200,13 @@
     <p class="dlg-text">已登入 <b id="syncWho"></b></p>
     <p class="hint" id="syncState"></p>
     <div class="dlg-foot"><button class="btn-ghost" id="syncNow" type="button">立即同步</button><button class="btn-text" id="logoutBtn" type="button">登出</button></div>
+    <h4 class="sub">LINE 推播（J.A.R.V.I.S）</h4>
+    <p class="dlg-text">狀態：<b id="lineState">讀取中…</b></p>
+    <div class="dlg-foot">
+      <button class="btn-ghost" id="lineCodeBtn" type="button">綁定 LINE</button>
+      <button class="btn-text" id="lineUnlink" type="button" hidden>解除綁定</button>
+    </div>
+    <p class="dlg-text code-out" id="lineCodeOut" hidden>把這組綁定碼傳給 J.A.R.V.I.S 官方帳號（30 分鐘內有效）：<br><b class="code" id="lineCode"></b></p>
   </section>
   <p class="form-msg" id="syncMsg"></p>
   <h4 class="sub">本機備份</h4>
