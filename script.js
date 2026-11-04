@@ -92,7 +92,7 @@
     if (!m && /^\d{7,8}$/.test(s)) m = [s, s.slice(0, s.length - 4), s.slice(-4, -2), s.slice(-2)];
     if (m) { let y = +m[1]; if (y < 200) y += 1911; return valid(y, +m[2], +m[3]); } // 民國年 → 西元
     m = /^(\d{1,2})[\/\-.月](\d{1,2})日?$/.exec(s);
-    if (m) return valid(2000, +m[1], +m[2]);      // 不知道年份時記成 2000 年
+    if (m) return valid(1904, +m[1], +m[2]);      // 不知道年份時記成 1904 年（閏年，2/29 也能存；不會撞到真實生日）
     return null;
   }
   function daysUntilBirthday(iso) {
@@ -102,7 +102,7 @@
     if (b < t) b = new Date(t.getFullYear() + 1, +m[2] - 1, +m[3]);
     return Math.round((b - t) / 86400000);
   }
-  const mdLabel = (iso) => iso.slice(0, 4) === "2000" ? `${+iso.slice(5, 7)}/${+iso.slice(8)}` : iso.replace(/-/g, "/");
+  const mdLabel = (iso) => iso.slice(0, 4) === "1904" ? `${+iso.slice(5, 7)}/${+iso.slice(8)}` : iso.replace(/-/g, "/");
 
   /* ---------- people (imported + typed in) ---------- */
   const SAMPLE_PEOPLE = (() => {
