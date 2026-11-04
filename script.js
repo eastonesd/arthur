@@ -12,8 +12,8 @@
     get(k, fallback = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
-  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda", todos: "jarvis.todos", gcal: "jarvis.gcal", routines: "jarvis.routines" };
-  const SYNCED = ["people", "ledger", "agenda", "todos", "gcal", "routines"];    // 會同步到 Supabase 的資料
+  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda", todos: "jarvis.todos", gcal: "jarvis.gcal", routines: "jarvis.routines", tomb: "jarvis.tomb" };
+  const SYNCED = ["people", "ledger", "agenda", "todos", "gcal", "routines", "tomb"];    // 會同步到 Supabase 的資料
   const state = {
     events: null, mail: null, fx: null,
     clients: store.get(KEYS.clients),               // imported from 東石系統
@@ -24,14 +24,17 @@
     todos: store.get(KEYS.todos, []),               // 待辦
     gcal: store.get(KEYS.gcal, null),               // 今天的 Google 日曆（給 LINE 推播用）
     routines: store.get(KEYS.routines, null),       // 生活提醒（以 config.js 為準，同步給後端推播）
+    tomb: store.get(KEYS.tomb, {}),                 // 已刪除項目的 id → 刪除時間（合併同步時才知道哪些是真的刪掉）
     cloudClients: null, cloudPolicies: null,        // 從東石系統（Supabase）讀到的客戶
   };
   // 本機儲存 + 排程上傳雲端
   function persist() {
     SYNCED.forEach((k) => store.set(KEYS[k], state[k]));
-    store.set("jarvis.savedAt", Date.now());
     cloud.schedulePush();
   }
+  // 每筆資料帶修改時間 u；刪除時留下墓碑，同步時才不會被別台裝置的舊資料「救回來」
+  const stamp = (o) => ({ ...o, u: Date.now() });
+  const bury = (...ids) => { ids.forEach((id) => { if (id) state.tomb[id] = Date.now(); }); };
 
   /* ---------- clock ---------- */
   const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
@@ -170,14 +173,14 @@
     e.preventDefault();
     const name = $("pName").value.trim(), birthday = normDate($("pBday").value);
     if (!birthday) { $("pMsg").textContent = "生日格式看不懂，請用 1990-05-12、民國 79/05/12 或 05/12。"; return; }
-    state.people.push({ id: uid(), name, birthday, group: $("pGroup").value });
+    state.people.push(stamp({ id: uid(), name, birthday, group: $("pGroup").value }));
     persist();
     $("pMsg").textContent = ""; $("pName").value = ""; $("pBday").value = ""; $("pName").focus();
     renderPeople();
   });
   $("peopleList").addEventListener("click", (e) => {
     const id = e.target.dataset.delPerson; if (!id) return;
-    state.people = state.people.filter((p) => p.id !== id);
+    state.people = state.people.filter((p) => p.id !== id); bury(id);
     persist(); renderPeople();
   });
   $("clearImport").addEventListener("click", () => {
@@ -322,15 +325,17 @@
   $("agendaForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const item = { date: $("aDate").value, time: $("aTime").value, title: $("aTitle").value.trim(), where: $("aWhere").value.trim() };
-    if (editingId) state.agenda = state.agenda.map((a) => a.id === editingId ? { ...a, ...item } : a);
-    else state.agenda.push({ id: uid(), ...item });
-    state.agenda = state.agenda.filter((a) => a.date >= new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)); // 只留最近 30 天以後的
+    if (editingId) state.agenda = state.agenda.map((a) => a.id === editingId ? stamp({ ...a, ...item }) : a);
+    else state.agenda.push(stamp({ id: uid(), ...item }));
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10); // 只留最近 30 天以後的
+    bury(...state.agenda.filter((a) => a.date < cutoff).map((a) => a.id));
+    state.agenda = state.agenda.filter((a) => a.date >= cutoff);
     persist(); resetAgendaForm(); renderAgenda(); renderAgendaDialog(); $("aTitle").focus();
   });
   $("agendaList").addEventListener("click", (e) => {
     const ed = e.target.dataset.editAgenda; if (ed) return startEdit(ed);
     const id = e.target.dataset.delAgenda; if (!id) return;
-    state.agenda = state.agenda.filter((a) => a.id !== id);
+    state.agenda = state.agenda.filter((a) => a.id !== id); bury(id);
     if (editingId === id) resetAgendaForm();
     persist(); renderAgenda(); renderAgendaDialog();
   });
@@ -350,21 +355,23 @@
     ).join("") : `<li class="empty-note">沒有待辦事項。</li>`;
   }
   function toggleTodo(id) {
-    state.todos = state.todos.map((x) => x.id === id ? { ...x, done: !x.done, doneAt: !x.done ? new Date().toISOString() : undefined } : x);
+    state.todos = state.todos.map((x) => x.id === id ? stamp({ ...x, done: !x.done, doneAt: !x.done ? new Date().toISOString() : undefined }) : x);
     // 完成超過 7 天的自動清掉
-    state.todos = state.todos.filter((x) => !x.done || !x.doneAt || Date.now() - new Date(x.doneAt) < 7 * 86400000);
+    const old = (x) => x.done && x.doneAt && Date.now() - new Date(x.doneAt) >= 7 * 86400000;
+    bury(...state.todos.filter(old).map((x) => x.id));
+    state.todos = state.todos.filter((x) => !old(x));
     persist(); renderTodoMini(); renderTodoDialog();
   }
   $("todoForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    state.todos.push({ id: uid(), title: $("tTitle").value.trim(), due: $("tDue").value || "", done: false });
+    state.todos.push(stamp({ id: uid(), title: $("tTitle").value.trim(), due: $("tDue").value || "", done: false }));
     persist(); renderTodoMini(); renderTodoDialog();
     $("tTitle").value = ""; $("tDue").value = ""; $("tTitle").focus();
   });
   $("todoList").addEventListener("click", (e) => {
     if (e.target.dataset.done) return toggleTodo(e.target.dataset.done);
     const id = e.target.dataset.delTodo; if (!id) return;
-    state.todos = state.todos.filter((x) => x.id !== id);
+    state.todos = state.todos.filter((x) => x.id !== id); bury(id);
     persist(); renderTodoMini(); renderTodoDialog();
   });
   $("todoMini").addEventListener("change", (e) => { if (e.target.dataset.done) toggleTodo(e.target.dataset.done); });
@@ -457,18 +464,18 @@
   $("balForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const amount = num($("bAmt").value); if (!(amount >= 0)) { $("bAmt").focus(); return; }
-    saveLedger((L) => L.items.push({ id: uid(), kind: $("bKind").value, name: $("bName").value.trim(), amount, cur: $("bCur").value }));
+    saveLedger((L) => L.items.push(stamp({ id: uid(), kind: $("bKind").value, name: $("bName").value.trim(), amount, cur: $("bCur").value })));
     $("bName").value = ""; $("bAmt").value = ""; $("bName").focus();
   });
   $("fixForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const amount = num($("fAmt").value), day = parseInt($("fDay").value, 10);
     if (!(amount >= 0) || !(day >= 1 && day <= 31)) return;
-    saveLedger((L) => L.fixed.push({ id: uid(), dir: $("fDir").value, name: $("fName").value.trim(), day, amount }));
+    saveLedger((L) => L.fixed.push(stamp({ id: uid(), dir: $("fDir").value, name: $("fName").value.trim(), day, amount })));
     $("fName").value = ""; $("fDay").value = ""; $("fAmt").value = ""; $("fName").focus();
   });
-  $("balList").addEventListener("click", (e) => { const id = e.target.dataset.delItem; if (id) saveLedger((L) => { L.items = L.items.filter((i) => i.id !== id); }); });
-  $("fixList").addEventListener("click", (e) => { const id = e.target.dataset.delFixed; if (id) saveLedger((L) => { L.fixed = L.fixed.filter((f) => f.id !== id); }); });
+  $("balList").addEventListener("click", (e) => { const id = e.target.dataset.delItem; if (id) saveLedger((L) => { L.items = L.items.filter((i) => i.id !== id); bury(id); }); });
+  $("fixList").addEventListener("click", (e) => { const id = e.target.dataset.delFixed; if (id) saveLedger((L) => { L.fixed = L.fixed.filter((f) => f.id !== id); bury(id); }); });
 
   fetch("https://open.er-api.com/v6/latest/USD").then((r) => r.json()).then((j) => {
     if (j.result !== "success") throw new Error();
@@ -492,7 +499,9 @@
     try {
       const d = JSON.parse(await f.text());
       if (d.app !== "jarvis") throw new Error("這不是 JARVIS 的備份檔");
-      state.clients = d.clients || null; state.book = d.book || null; state.people = d.people || []; state.ledger = d.ledger || null; state.agenda = d.agenda || []; state.todos = d.todos || [];
+      const st = (arr) => (arr || []).map((x) => ({ ...x, u: Date.now() }));
+      state.clients = d.clients || null; state.book = d.book || null; state.people = st(d.people); state.agenda = st(d.agenda); state.todos = st(d.todos);
+      state.ledger = d.ledger ? { items: st(d.ledger.items), fixed: st(d.ledger.fixed) } : null;
       store.set(KEYS.clients, state.clients); store.set(KEYS.book, state.book);
       persist(); renderPeople(); renderMoney();
       $("backupHint").textContent = "已還原。";
@@ -503,7 +512,7 @@
   /* ---------- Supabase 雲端同步 ---------- */
   const cloud = (() => {
     const sb = CFG.supabaseUrl && CFG.supabaseKey && window.supabase ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey) : null;
-    let user = null, timer = null, lastSync = null, busy = false;
+    let user = null, timer = null, lastSync = null, busy = false, again = false;
     const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     function renderStatus(msg) {
       const b = $("syncBtn");
@@ -518,31 +527,63 @@
     }
     const snapshot = () => Object.fromEntries(SYNCED.map((k) => [k, state[k]]));
     function apply(data) {
-      SYNCED.forEach((k) => { if (k in data) state[k] = data[k] ?? (["ledger", "gcal", "routines"].includes(k) ? null : []); });
+      SYNCED.forEach((k) => { state[k] = data[k] ?? (["ledger", "gcal", "routines"].includes(k) ? null : k === "tomb" ? {} : []); });
       SYNCED.forEach((k) => store.set(KEYS[k], state[k]));
       renderPeople(); renderMoney(); renderAgenda();
       if ($("dlgAgenda").open) renderAgendaDialog();
     }
-    async function push() {
+    // 合併兩份資料：以 id 聯集，同一筆取較新的（u），墓碑裡的才算刪除。
+    // 任何一邊是空的或舊的，都不會把另一邊的資料蓋掉。
+    function mergeList(a, b, tomb) { // a = 本機, b = 雲端
+      const m = new Map();
+      // 雲端（b）先放，同時間時以雲端為準（例如在 LINE 上按了完成待辦）
+      for (const x of [...(b || []), ...(a || [])]) {
+        if (!x || !x.id || tomb[x.id]) continue;
+        const cur = m.get(x.id);
+        if (!cur || (x.u || 0) > (cur.u || 0)) m.set(x.id, x);
+      }
+      return [...m.values()];
+    }
+    function merge(local, remote) {
+      const tomb = { ...(remote.tomb || {}), ...(local.tomb || {}) };
+      const keepAfter = Date.now() - 90 * 86400000; // 墓碑保留 90 天
+      Object.keys(tomb).forEach((id) => { if (tomb[id] < keepAfter) delete tomb[id]; });
+      const L = local.ledger || {}, R = remote.ledger || {};
+      const hasLedger = local.ledger || remote.ledger;
+      const newer = (x, y) => (!x ? y : !y ? x : (x.date || "") >= (y.date || "") ? x : y);
+      return {
+        tomb,
+        people: mergeList(local.people, remote.people, tomb),
+        agenda: mergeList(local.agenda, remote.agenda, tomb),
+        todos: mergeList(local.todos, remote.todos, tomb),
+        ledger: hasLedger ? { items: mergeList(L.items, R.items, tomb), fixed: mergeList(L.fixed, R.fixed, tomb) } : null,
+        gcal: newer(local.gcal, remote.gcal),
+        routines: CFG.routines,
+      };
+    }
+    const canon = (d) => JSON.stringify(SYNCED.map((k) => { const v = d[k]; return Array.isArray(v) ? [...v].sort((a, b) => String(a.id).localeCompare(String(b.id))) : v ?? null; }));
+    // 同步 = 讀雲端 → 合併 → 套用到本機 → 有差異才寫回雲端
+    async function sync() {
       if (!user) return;
-      const { error } = await sb.from("jarvis_state").upsert({ owner: user.id, data: snapshot(), updated_at: new Date().toISOString() });
-      if (error) { renderStatus(`同步失敗：${error.message}`); return; }
-      lastSync = new Date(); renderStatus();
-    }
-    // 雲端與本機比較，較新的一方勝出
-    async function pull() {
-      if (!user || busy) return; busy = true;
+      if (busy) { again = true; return; }
+      busy = true;
       try {
-        const { data, error } = await sb.from("jarvis_state").select("data, updated_at").eq("owner", user.id).maybeSingle();
+        const { data, error } = await sb.from("jarvis_state").select("data").eq("owner", user.id).maybeSingle();
         if (error) throw error;
-        const localAt = store.get("jarvis.savedAt", 0), localHas = SYNCED.some((k) => Array.isArray(state[k]) ? state[k].length : !!state[k]);
-        if (!data) { if (localHas) await push(); else { lastSync = new Date(); renderStatus(); } }
-        else if (new Date(data.updated_at).getTime() >= localAt || !localHas) {
-          apply(data.data); store.set("jarvis.savedAt", new Date(data.updated_at).getTime()); lastSync = new Date(); renderStatus();
-        } else await push();
+        const remote = data?.data || {};
+        const merged = merge(snapshot(), remote);
+        // 套用前留一份本機備份（最近 3 份），以防萬一
+        try { const bk = store.get("jarvis.localBackups", []); bk.unshift({ at: Date.now(), data: snapshot() }); store.set("jarvis.localBackups", bk.slice(0, 3)); } catch {}
+        apply(merged);
+        if (canon(merged) !== canon(remote)) {
+          const { error: e2 } = await sb.from("jarvis_state").upsert({ owner: user.id, data: merged, updated_at: new Date().toISOString() });
+          if (e2) throw e2;
+        }
+        lastSync = new Date(); renderStatus();
       } catch (err) { renderStatus(`同步失敗：${err.message}`); }
-      finally { busy = false; }
+      finally { busy = false; if (again) { again = false; sync(); } }
     }
+    const pull = sync;
     // 東石系統的客戶（唯讀）
     async function loadClients() {
       if (!user) return;
@@ -615,9 +656,7 @@
       pushStatus();
     });
     // 生活提醒存到雲端，讓後端知道幾點要提醒
-    function syncRoutines() {
-      if (JSON.stringify(state.routines) !== JSON.stringify(CFG.routines)) { state.routines = CFG.routines; persist(); }
-    }
+    function syncRoutines() { /* merge() 一律寫入 config.js 的 routines */ }
     async function onUser(u) {
       user = u || null;
       if (!user) { state.cloudClients = null; state.cloudPolicies = null; lastSync = null; renderStatus(); renderPeople(); return; }
@@ -641,7 +680,7 @@
     $("syncNow").addEventListener("click", async () => { await pull(); await loadClients(); });
     return {
       renderStatus, lineStatus, pushStatus,
-      schedulePush() { if (!user) return; clearTimeout(timer); timer = setTimeout(push, 1200); },
+      schedulePush() { if (!user) return; clearTimeout(timer); timer = setTimeout(sync, 1200); },
     };
   })();
 
