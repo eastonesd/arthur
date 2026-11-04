@@ -12,8 +12,8 @@
     get(k, fallback = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
-  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda", todos: "jarvis.todos", gcal: "jarvis.gcal" };
-  const SYNCED = ["people", "ledger", "agenda", "todos", "gcal"];    // 會同步到 Supabase 的資料
+  const KEYS = { clients: "jarvis.clients", book: "jarvis.book", people: "jarvis.people", ledger: "jarvis.ledger", agenda: "jarvis.agenda", todos: "jarvis.todos", gcal: "jarvis.gcal", routines: "jarvis.routines" };
+  const SYNCED = ["people", "ledger", "agenda", "todos", "gcal", "routines"];    // 會同步到 Supabase 的資料
   const state = {
     events: null, mail: null, fx: null,
     clients: store.get(KEYS.clients),               // imported from 東石系統
@@ -23,6 +23,7 @@
     agenda: store.get(KEYS.agenda, []),             // 手動登打的行程
     todos: store.get(KEYS.todos, []),               // 待辦
     gcal: store.get(KEYS.gcal, null),               // 今天的 Google 日曆（給 LINE 推播用）
+    routines: store.get(KEYS.routines, null),       // 生活提醒（以 config.js 為準，同步給後端推播）
     cloudClients: null, cloudPolicies: null,        // 從東石系統（Supabase）讀到的客戶
   };
   // 本機儲存 + 排程上傳雲端
@@ -477,7 +478,7 @@
   }).catch(() => { $("fxUsd").textContent = "—"; });
 
   /* ---------- 備份與還原 ---------- */
-  $("syncBtn").addEventListener("click", () => { $("backupHint").textContent = ""; $("syncMsg").textContent = ""; cloud.renderStatus(); cloud.lineStatus(); open("dlgSync"); });
+  $("syncBtn").addEventListener("click", () => { $("backupHint").textContent = ""; $("syncMsg").textContent = ""; cloud.renderStatus(); cloud.lineStatus(); cloud.pushStatus(); open("dlgSync"); });
   $("exportBtn").addEventListener("click", () => {
     const data = { app: "jarvis", version: 1, exported: new Date().toISOString(), clients: state.clients, book: state.book, people: state.people, ledger: state.ledger, agenda: state.agenda, todos: state.todos };
     const a = document.createElement("a");
@@ -517,7 +518,7 @@
     }
     const snapshot = () => Object.fromEntries(SYNCED.map((k) => [k, state[k]]));
     function apply(data) {
-      SYNCED.forEach((k) => { if (k in data) state[k] = data[k] ?? (k === "ledger" || k === "gcal" ? null : []); });
+      SYNCED.forEach((k) => { if (k in data) state[k] = data[k] ?? (["ledger", "gcal", "routines"].includes(k) ? null : []); });
       SYNCED.forEach((k) => store.set(KEYS[k], state[k]));
       renderPeople(); renderMoney(); renderAgenda();
       if ($("dlgAgenda").open) renderAgendaDialog();
@@ -571,10 +572,56 @@
       $("lineCode").textContent = code; $("lineCodeOut").hidden = false;
     });
     $("lineUnlink").addEventListener("click", async () => { await sb.from("jarvis_line_links").delete().eq("owner", user.id); lineStatus(); });
+    // 手機通知（Web Push）
+    const FN = `${CFG.supabaseUrl}/functions/v1/jarvis-line`;
+    const pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+    const b64ToBytes = (b64) => { const s = atob((b64 + "=".repeat((4 - b64.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(s, (c) => c.charCodeAt(0)); };
+    async function currentSub() { const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+    async function pushStatus() {
+      const show = (state, hint, on) => {
+        $("pushState").textContent = state; $("pushHint").textContent = hint || "";
+        $("pushOn").hidden = !!on || !pushSupported; $("pushTest").hidden = !on; $("pushOff").hidden = !on;
+      };
+      if (!pushSupported) return show("不支援", isIOS && !standalone ? "iPhone 要先用 Safari「加入主畫面」，再從主畫面的 JARVIS 開啟，才能開通知（需 iOS 16.4 以上）。" : "這個瀏覽器不支援推播通知。");
+      if (Notification.permission === "denied") return show("已封鎖", "請到手機「設定 → 通知 → JARVIS」打開通知。");
+      const sub = await currentSub().catch(() => null);
+      show(sub ? "已開啟" : "未開啟", sub ? `每天 ${CFG.routines.map((r) => `${r.time} ${r.label}`).join("、")} 會推播提醒。` : "", !!sub);
+    }
+    $("pushOn").addEventListener("click", async () => {
+      if (!user) return;
+      try {
+        // 必須直接由點擊觸發，iPhone 才會跳出允許通知的視窗
+        const perm = await Notification.requestPermission();
+        if (perm !== "granted") return pushStatus();
+        const { publicKey } = await (await fetch(`${FN}?vapid=1`)).json();
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+        const j = sub.toJSON();
+        const { error } = await sb.from("jarvis_push_subs").upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, device: navigator.userAgent.slice(0, 200) });
+        if (error) throw error;
+        await pushStatus(); $("pushHint").textContent = "已開啟，正在傳送測試通知…"; await testPush();
+      } catch (err) { $("pushHint").textContent = `開啟失敗：${err.message}`; }
+    });
+    async function testPush() {
+      const { data, error } = await sb.functions.invoke("jarvis-line", { body: { action: "test-push" } });
+      $("pushHint").textContent = error ? `測試通知失敗：${error.message}` : data?.sent ? "測試通知已送出，請看看手機。" : "沒有送出，請重新開啟通知。";
+    }
+    $("pushTest").addEventListener("click", testPush);
+    $("pushOff").addEventListener("click", async () => {
+      const sub = await currentSub().catch(() => null);
+      if (sub) { await sb.from("jarvis_push_subs").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+      pushStatus();
+    });
+    // 生活提醒存到雲端，讓後端知道幾點要提醒
+    function syncRoutines() {
+      if (JSON.stringify(state.routines) !== JSON.stringify(CFG.routines)) { state.routines = CFG.routines; persist(); }
+    }
     async function onUser(u) {
       user = u || null;
       if (!user) { state.cloudClients = null; state.cloudPolicies = null; lastSync = null; renderStatus(); renderPeople(); return; }
-      renderStatus(); await pull(); await loadClients(); lineStatus();
+      renderStatus(); await pull(); syncRoutines(); await loadClients(); lineStatus();
     }
     if (sb) {
       sb.auth.getSession().then(({ data }) => onUser(data.session?.user));
@@ -593,7 +640,7 @@
     $("logoutBtn").addEventListener("click", () => sb && sb.auth.signOut());
     $("syncNow").addEventListener("click", async () => { await pull(); await loadClients(); });
     return {
-      renderStatus, lineStatus,
+      renderStatus, lineStatus, pushStatus,
       schedulePush() { if (!user) return; clearTimeout(timer); timer = setTimeout(push, 1200); },
     };
   })();

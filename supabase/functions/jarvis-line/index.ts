@@ -14,9 +14,10 @@
 // verify_jwt 關閉：LINE 不帶 Supabase JWT，改用 LINE 簽章與 cron token 驗證。
 // ============================================================
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
+import webpush from "npm:web-push@3.6.7";
 import {
   type JarvisData, type Person, eventReminderText, eveningTodos, everyone, birthdaysOn,
-  fallbackGreeting, morningBrief, openTodos, taipeiNow, upcomingEvents,
+  fallbackGreeting, morningBrief, openTodos, routinesDue, taipeiNow, upcomingEvents,
 } from "./brief.ts";
 
 const SECRET = () => Deno.env.get("JARVIS_LINE_CHANNEL_SECRET") ?? "";
@@ -111,6 +112,52 @@ const todoButtons = (todos: { id: string; title: string }[]) => ({
   items: todos.slice(0, 13).map((t) => ({ type: "action", action: { type: "postback", label: `✓ ${t.title}`.slice(0, 20), data: `done:${t.id}`, displayText: `完成：${t.title}` } })),
 });
 
+// ---------- 手機推播（Web Push）----------
+async function vapidKeys(db: SupabaseClient) {
+  const { data } = await db.from("jarvis_vapid").select("public_key, private_key").eq("id", 1).maybeSingle();
+  if (data) return data;
+  const k = webpush.generateVAPIDKeys();
+  await db.from("jarvis_vapid").upsert({ id: 1, public_key: k.publicKey, private_key: k.privateKey }, { onConflict: "id", ignoreDuplicates: true });
+  const { data: again } = await db.from("jarvis_vapid").select("public_key, private_key").eq("id", 1).single();
+  return again!;
+}
+async function webPush(db: SupabaseClient, owner: string, payload: { title: string; body: string; tag?: string }) {
+  const { data: subs } = await db.from("jarvis_push_subs").select("endpoint, p256dh, auth").eq("owner", owner);
+  if (!subs?.length) return { sent: 0, failed: 0 };
+  const k = await vapidKeys(db);
+  webpush.setVapidDetails("mailto:noreply@jarvis.local", k.public_key, k.private_key);
+  let sent = 0, failed = 0;
+  for (const s of subs) {
+    try {
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), { TTL: 3600 });
+      sent++;
+    } catch (e: any) {
+      failed++;
+      // 裝置取消訂閱或過期：刪掉這筆
+      if (e?.statusCode === 404 || e?.statusCode === 410) await db.from("jarvis_push_subs").delete().eq("endpoint", s.endpoint);
+      else console.error("web push failed", e?.statusCode, e?.body);
+    }
+  }
+  return { sent, failed };
+}
+async function runRoutines(db: SupabaseClient, dryRun: boolean) {
+  const now = taipeiNow();
+  const { data: rows } = await db.from("jarvis_push_subs").select("owner");
+  const owners = [...new Set((rows ?? []).map((r: { owner: string }) => r.owner))];
+  const out = [];
+  for (const owner of owners) {
+    const { data } = await db.from("jarvis_state").select("data").eq("owner", owner).maybeSingle();
+    for (const r of routinesDue((data?.data ?? {}) as JarvisData, now)) {
+      const entry: Record<string, unknown> = { owner, routine: r.label };
+      if (dryRun) { entry.preview = r.msg; out.push(entry); continue; }
+      if (!(await claim(db, owner, "routine", `${r.time}|${r.label}`, now.date))) continue;
+      entry.result = await webPush(db, owner, { title: "J.A.R.V.I.S", body: r.msg!, tag: `routine-${r.label}` });
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
 // ---------- 排程 ----------
 async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
   const now = taipeiNow();
@@ -145,7 +192,8 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
     if (!res.ok && kind) await unclaim(db, link.owner, kind, ref, now.date);
     out.push(entry);
   }
-  return { today: now.date, task, dry_run: dryRun, report: out };
+  const routines = task === "tick" ? await runRoutines(db, dryRun) : [];
+  return { today: now.date, task, dry_run: dryRun, report: out, routines };
 }
 
 // ---------- webhook ----------
@@ -220,9 +268,18 @@ async function handleEvent(db: SupabaseClient, ev: any) {
   if (["說明", "HELP", "?", "？"].includes(t)) await reply(text(HELP));
 }
 
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info", "Access-Control-Allow-Methods": "GET, POST, OPTIONS" };
+const corsJson = (obj: unknown, status = 200) => new Response(JSON.stringify(obj), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+
 Deno.serve(async (req) => {
-  if (req.method !== "POST") return new Response("ok");
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const db = adminClient();
+  // 儀表板取得推播公鑰（公開資訊）
+  if (req.method === "GET" && new URL(req.url).searchParams.has("vapid")) {
+    const k = await vapidKeys(db);
+    return new Response(JSON.stringify({ publicKey: k.public_key }), { headers: { ...CORS, "Content-Type": "application/json" } });
+  }
+  if (req.method !== "POST") return new Response("ok");
 
   // 排程呼叫
   const cron = req.headers.get("x-cron-token");
@@ -232,6 +289,15 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     try { return json(await runTask(db, String(body.task || "morning"), !!body.dry_run)); }
     catch (e) { return json({ error: String(e) }, 500); }
+  }
+
+  // 儀表板（已登入的使用者）：傳一則測試通知到自己的裝置
+  const auth = req.headers.get("authorization");
+  if (!req.headers.get("x-line-signature") && auth?.startsWith("Bearer ")) {
+    const { data: u } = await db.auth.getUser(auth.slice(7));
+    if (!u?.user) return corsJson({ error: "unauthorized" }, 401);
+    const r = await webPush(db, u.user.id, { title: "J.A.R.V.I.S", body: "先生，通知已開啟。每天 12:00、17:00、23:00 我會準時提醒您。", tag: "test" });
+    return corsJson(r);
   }
 
   // LINE webhook

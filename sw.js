@@ -1,6 +1,6 @@
 /* JARVIS service worker：讓安裝後的 App 可離線開啟。
    只快取本站檔案；Google、Supabase、匯率等外部請求一律直接走網路。 */
-const VERSION = "jarvis-2.5.0";
+const VERSION = "jarvis-2.6.0";
 const SHELL = [
   "./", "index.html", "style.css", "script.js", "config.js", "manifest.webmanifest",
   "assets/core.jpg", "assets/icon-192.png", "assets/icon-512.png", "assets/favicon.png",
@@ -26,4 +26,21 @@ self.addEventListener("fetch", (e) => {
       return res;
     }).catch(() => caches.match(e.request).then((r) => r || caches.match("index.html")))
   );
+});
+
+// 手機推播：收到後顯示通知
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || "J.A.R.V.I.S", {
+    body: d.body || "", tag: d.tag, icon: "assets/icon-192.png", badge: "assets/icon-192.png",
+  }));
+});
+// 點通知打開 JARVIS
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+    const w = list.find((c) => c.url.startsWith(self.registration.scope));
+    return w ? w.focus() : self.clients.openWindow("./");
+  }));
 });

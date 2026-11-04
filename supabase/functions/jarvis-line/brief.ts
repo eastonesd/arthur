@@ -12,7 +12,23 @@ export type JarvisData = {
   todos?: Todo[];
   ledger?: { items?: unknown[]; fixed?: Fixed[] } | null;
   gcal?: { date: string; events: { time: string; title: string; where?: string }[] } | null;
+  routines?: Routine[];
 };
+export type Routine = { label: string; time: string; msg?: string };
+
+// 生活提醒預設值（儀表板可改，存在 jarvis_state.routines）
+export const DEFAULT_ROUTINES: Routine[] = [
+  { label: "午餐", time: "12:00", msg: "先生，午餐時間到了，該去吃飯了。" },
+  { label: "洗澡", time: "17:00", msg: "先生，17:00 了，該去洗澡了。" },
+  { label: "睡覺", time: "23:00", msg: "先生，已經 23:00，該上床睡覺了。明天見。" },
+];
+
+// 這一輪排程（每 5 分鐘）該發的生活提醒
+export function routinesDue(data: JarvisData, now = taipeiNow(), windowMin = 5) {
+  const list = data.routines?.length ? data.routines : DEFAULT_ROUTINES;
+  return list.filter((r) => { const m = mins(r.time); return m >= 0 && now.minutes >= m && now.minutes < m + windowMin; })
+    .map((r) => ({ ...r, msg: r.msg || `先生，${r.time} 了，提醒您：${r.label}。` }));
+}
 
 // 台北時間
 export function taipeiNow(now = new Date()) {

@@ -206,6 +206,14 @@
       <button class="btn-ghost" id="lineCodeBtn" type="button">綁定 LINE</button>
       <button class="btn-text" id="lineUnlink" type="button" hidden>解除綁定</button>
     </div>
+    <h4 class="sub">手機通知</h4>
+    <p class="dlg-text">這台裝置：<b id="pushState">檢查中…</b></p>
+    <p class="hint" id="pushHint"></p>
+    <div class="dlg-foot">
+      <button class="btn-ghost" id="pushOn" type="button">開啟這台裝置的通知</button>
+      <button class="btn-ghost" id="pushTest" type="button" hidden>傳送測試通知</button>
+      <button class="btn-text" id="pushOff" type="button" hidden>關閉通知</button>
+    </div>
     <p class="dlg-text code-out" id="lineCodeOut" hidden>把這組綁定碼傳給 J.A.R.V.I.S 官方帳號（30 分鐘內有效）：<br><b class="code" id="lineCode"></b></p>
   </section>
   <p class="form-msg" id="syncMsg"></p>

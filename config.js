@@ -14,8 +14,10 @@ window.JARVIS_CONFIG = {
   supabaseKey: "sb_publishable_n309GkhFeBRtg7thi9cSdQ_m6MiBpoU",
 
   // 今日指揮中心下方的生活提醒
+  // 開啟手機通知後，時間到會推播 msg 的內容
   routines: [
-    { label: "午餐", time: "12:00" },
-    { label: "洗澡", time: "17:00" }
+    { label: "午餐", time: "12:00", msg: "先生，午餐時間到了，該去吃飯了。" },
+    { label: "洗澡", time: "17:00", msg: "先生，17:00 了，該去洗澡了。" },
+    { label: "睡覺", time: "23:00", msg: "先生，已經 23:00，該上床睡覺了。明天見。" }
   ]
 };
