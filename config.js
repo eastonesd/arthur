@@ -13,6 +13,9 @@ window.JARVIS_CONFIG = {
   supabaseUrl: "https://kocyedkngpxckixtudku.supabase.co",
   supabaseKey: "sb_publishable_n309GkhFeBRtg7thi9cSdQ_m6MiBpoU",
 
+  // 每月收入目標（台幣）：核心上方的進度條、每月 15 日的 LINE 進度提醒
+  incomeGoal: 180000,
+
   // 今日指揮中心下方的生活提醒
   // 開啟手機通知後，時間到會推播 msg 的內容
   routines: [

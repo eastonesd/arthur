@@ -440,6 +440,7 @@
     const tag = $("moneyTag");
     tag.textContent = live ? "已登打" : "範例"; tag.classList.toggle("live", live);
     renderMoneyDialog();
+    renderGoal();
   }
   function renderMoneyDialog() {
     const L = state.ledger || { items: [], fixed: [] };
@@ -457,9 +458,50 @@
     ).join("") : `<li class="empty-note">例：房租 5 號、信用卡 12 號、薪水 10 號。</li>`;
   }
   function saveLedger(mut) {
-    if (!state.ledger) state.ledger = { items: [], fixed: [] };
+    if (!state.ledger) state.ledger = { items: [], fixed: [], income: [] };
+    if (!state.ledger.income) state.ledger.income = [];
+    state.ledger.goal = GOAL;
     mut(state.ledger); persist(); renderMoney();
   }
+
+  /* ---------- 每月收入目標 ---------- */
+  const GOAL = Number(CFG.incomeGoal) || 180000;
+  const monthKey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  const todayIso = () => { const d = new Date(); return `${monthKey(d)}-${pad(d.getDate())}`; };
+  const monthIncome = () => ((state.ledger && state.ledger.income) || []).filter((x) => (x.date || "").startsWith(monthKey()));
+  function renderGoal() {
+    const list = monthIncome();
+    const sum = list.reduce((s, x) => s + (x.amount || 0), 0);
+    const pct = GOAL ? (sum / GOAL) * 100 : 0;
+    const shown = pct >= 100 ? Math.floor(pct) : Math.round(pct * 10) / 10;
+    $("goalLabel").textContent = `${new Date().getMonth() + 1} 月收入目標`;
+    $("goalPct").textContent = `${shown}%`;
+    $("goalFill").style.width = `${Math.min(pct, 100)}%`;
+    $("goalBar").setAttribute("aria-valuenow", String(Math.min(Math.round(pct), 100)));
+    $("goalNow").textContent = money(sum);
+    $("goalTarget").textContent = money(GOAL);
+    $("goalLeft").textContent = sum >= GOAL ? `已超標 ${money(sum - GOAL)}` : `還差 ${money(GOAL - sum)}`;
+    $("goal").classList.toggle("done", sum >= GOAL);
+    // 對話框：本月進帳明細
+    $("incHint").textContent = `本月 ${list.length} 筆・NT$ ${money(sum)}`;
+    const rows = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.u || 0) - (a.u || 0));
+    $("incList").innerHTML = rows.length ? rows.map((x) =>
+      `<li><span class="n">${+x.date.slice(5, 7)}/${x.date.slice(8)}${x.note ? `・${esc(x.note)}` : ""}<small>進帳</small></span><span class="m in">+${money(x.amount)}</span><button class="del" type="button" data-del-inc="${x.id}" aria-label="刪除這筆進帳">刪除</button></li>`
+    ).join("") : `<li class="empty-note">這個月還沒有進帳。有收入的那天登打一筆，上方進度條會自動更新；每月 1 日重新計算。</li>`;
+  }
+  $("iDate").value = todayIso();
+  $("incForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const amount = num($("iAmt").value), date = $("iDate").value;
+    if (!(amount > 0)) { $("iAmt").focus(); return; }
+    if (!date) { $("iDate").focus(); return; }
+    saveLedger((L) => L.income.push(stamp({ id: uid(), date, amount, note: $("iNote").value.trim() })));
+    $("iAmt").value = ""; $("iNote").value = ""; $("iDate").value = todayIso(); $("iAmt").focus();
+  });
+  $("incList").addEventListener("click", (e) => { const id = e.target.dataset.delInc; if (id) saveLedger((L) => { L.income = L.income.filter((x) => x.id !== id); bury(id); }); });
+  // 跨月時自動歸零：每分鐘檢查一次月份
+  let goalMonth = monthKey();
+  setInterval(() => { if (monthKey() !== goalMonth) { goalMonth = monthKey(); $("iDate").value = todayIso(); renderGoal(); } }, 60000);
   $("openMoney").addEventListener("click", () => { renderMoneyDialog(); open("dlgMoney"); });
   $("balForm").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -501,7 +543,7 @@
       if (d.app !== "jarvis") throw new Error("這不是 JARVIS 的備份檔");
       const st = (arr) => (arr || []).map((x) => ({ ...x, u: Date.now() }));
       state.clients = d.clients || null; state.book = d.book || null; state.people = st(d.people); state.agenda = st(d.agenda); state.todos = st(d.todos);
-      state.ledger = d.ledger ? { items: st(d.ledger.items), fixed: st(d.ledger.fixed) } : null;
+      state.ledger = d.ledger ? { items: st(d.ledger.items), fixed: st(d.ledger.fixed), income: st(d.ledger.income), goal: GOAL } : null;
       store.set(KEYS.clients, state.clients); store.set(KEYS.book, state.book);
       persist(); renderPeople(); renderMoney();
       $("backupHint").textContent = "已還原。";
@@ -556,7 +598,7 @@
         people: mergeList(local.people, remote.people, tomb),
         agenda: mergeList(local.agenda, remote.agenda, tomb),
         todos: mergeList(local.todos, remote.todos, tomb),
-        ledger: hasLedger ? { items: mergeList(L.items, R.items, tomb), fixed: mergeList(L.fixed, R.fixed, tomb) } : null,
+        ledger: hasLedger ? { items: mergeList(L.items, R.items, tomb), fixed: mergeList(L.fixed, R.fixed, tomb), income: mergeList(L.income, R.income, tomb), goal: GOAL } : null,
         gcal: newer(local.gcal, remote.gcal),
         routines: CFG.routines,
       };

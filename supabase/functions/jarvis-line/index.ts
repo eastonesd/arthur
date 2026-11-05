@@ -2,11 +2,12 @@
 // J.A.R.V.I.S LINE 官方帳號
 // 網址：https://<project>.supabase.co/functions/v1/jarvis-line
 //
-// 1. LINE webhook（帶 x-line-signature）：綁定、解除綁定、「今天」、「待辦」、生日祝福按鈕、完成待辦按鈕
+// 1. LINE webhook（帶 x-line-signature）：綁定、解除綁定、「今天」、「待辦」、「進度」、生日祝福按鈕、完成待辦按鈕
 // 2. 排程（帶 x-cron-token，body {task}）：
 //    morning  每天 08:00 早安簡報
 //    tick     每 5 分鐘，行程開始前一小時提醒
 //    evening  每天 21:00 今日／逾期待辦追蹤
+//    goal     每月 15 日 09:00 收入目標進度
 //    body {dry_run:true} 只回報內容，不發送、不記錄
 //
 // Secrets：JARVIS_LINE_CHANNEL_SECRET、JARVIS_LINE_CHANNEL_ACCESS_TOKEN
@@ -17,7 +18,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.1
 import webpush from "npm:web-push@3.6.7";
 import {
   type JarvisData, type Person, eventReminderText, eveningTodos, everyone, birthdaysOn,
-  fallbackGreeting, morningBrief, openTodos, routinesDue, taipeiNow, upcomingEvents,
+  fallbackGreeting, goalProgress, morningBrief, openTodos, routinesDue, taipeiNow, upcomingEvents,
 } from "./brief.ts";
 
 const SECRET = () => Deno.env.get("JARVIS_LINE_CHANNEL_SECRET") ?? "";
@@ -180,6 +181,9 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
       }
       if (fresh.length) msg = text(eventReminderText(fresh));
       kind = ""; // 已逐筆記錄
+    } else if (task === "goal") {
+      msg = text(goalProgress(data, now).text);
+      ref = now.date.slice(0, 7);
     } else if (task === "evening") {
       const t = eveningTodos(data, now);
       if (t.length) msg = text(`晚安，先生。今天還有 ${t.length} 項待辦尚未完成：\n` + t.map((x) => `・${x.title}${x.overdue ? "（已逾期）" : ""}`).join("\n") + "\n\n完成的話點下方按鈕，我會幫您打勾。", todoButtons(t));
@@ -198,7 +202,7 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
 }
 
 // ---------- webhook ----------
-const HELP = "您好，我是 J.A.R.V.I.S。\n\n綁定方式：\n1. 打開 JARVIS 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「解除綁定」：停止推播";
+const HELP = "您好，我是 J.A.R.V.I.S。\n\n綁定方式：\n1. 打開 JARVIS 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「解除綁定」：停止推播";
 
 async function handleEvent(db: SupabaseClient, ev: any) {
   const uid: string | undefined = ev.source?.userId;
@@ -265,6 +269,10 @@ async function handleEvent(db: SupabaseClient, ev: any) {
     return void await reply(list.length
       ? text(`未完成的待辦 ${list.length} 項：\n` + list.map((x) => `・${x.title}${x.overdue ? "（已逾期）" : x.today ? "（今天）" : ""}`).join("\n"), todoButtons(list))
       : text("目前沒有未完成的待辦，先生。"));
+  }
+  if (["進度", "目標", "收入"].includes(t)) {
+    const { data } = await loadOwner(db, link.owner);
+    return void await reply(text(goalProgress(data, now).text.replace(/^先生，\d+ 月已過一半，/, "先生，")));
   }
   if (["說明", "HELP", "?", "？"].includes(t)) await reply(text(HELP));
 }

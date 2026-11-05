@@ -60,7 +60,7 @@ a{color:var(--cyan)}
   .grid{flex:1 1 auto;min-height:0;width:100%;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
   .panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
   .panel-body{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
-  .core-wrap{display:grid;grid-template-rows:minmax(0,1fr) auto;justify-items:center;min-height:0}
+  .core-wrap{display:grid;grid-template-rows:auto minmax(0,1fr) auto;justify-items:center;min-height:0}
   .core{width:100%;height:100%;max-width:none;aspect-ratio:auto}
 }
 @media (max-width:1100px){
@@ -120,6 +120,21 @@ a{color:var(--cyan)}
   border-radius:10px;background:linear-gradient(90deg,transparent,rgba(245,180,58,.1),transparent);max-width:100%;text-wrap:balance}
 .summary b{color:var(--gold);font-family:var(--f-display);font-size:17px;margin:0 2px}
 
+/* 每月收入目標 */
+.goal{width:min(100%,560px);display:grid;gap:7px;padding:10px 16px 11px;border:1px solid rgba(245,180,58,.4);border-radius:10px;
+  background:linear-gradient(90deg,rgba(245,180,58,.04),rgba(245,180,58,.1),rgba(245,180,58,.04))}
+.goal-top,.goal-sub{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-variant-numeric:tabular-nums}
+.goal-k{font-size:13px;letter-spacing:.12em;color:var(--muted)}
+.goal-pct{font:600 22px/1 var(--f-display);color:var(--gold)}
+.goal-bar{height:10px;border-radius:999px;background:rgba(245,180,58,.12);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(245,180,58,.25)}
+.goal-bar span{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#c98a1c,var(--gold));
+  box-shadow:0 0 12px rgba(245,180,58,.6);transition:width .8s ease}
+.goal.done .goal-bar span{background:linear-gradient(90deg,var(--gold),#ffe08a)}
+.goal-sub{font:13px var(--f-display);color:var(--muted)}
+.goal-sub b{color:var(--fg);font-weight:600}
+.income-sec{grid-column:1/-1}
+.income-sec .add-row input[type=date]{max-width:160px}
+
 /* mail */
 .mail-wrap{display:grid;grid-template-columns:96px minmax(0,1fr);gap:16px;min-height:0;flex:1 1 auto}
 .ring{position:relative;width:96px;height:96px}
@@ -162,6 +177,7 @@ a{color:var(--cyan)}
 .due{list-style:none;margin:0;padding:0;display:grid}
 .due li{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:7px 4px;border-bottom:1px solid rgba(94,200,255,.1)}
 .due .d{font:500 14px var(--f-display);color:var(--cyan);font-variant-numeric:tabular-nums}
+.due li.empty-note{display:block}
 .due .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .due .n small{color:var(--muted);margin-left:6px}
 .due .a{font:500 14px var(--f-display);font-variant-numeric:tabular-nums}

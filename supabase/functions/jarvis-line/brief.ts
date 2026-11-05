@@ -5,12 +5,13 @@
 export type Person = { name: string; birthday: string; group: string };
 export type AgendaItem = { id?: string; date: string; time?: string; title: string; where?: string };
 export type Todo = { id: string; title: string; due?: string; done?: boolean };
+export type Income = { id: string; date: string; amount: number; note?: string };
 export type Fixed = { id: string; dir: "in" | "out"; name: string; day: number; amount: number };
 export type JarvisData = {
   people?: Person[];
   agenda?: AgendaItem[];
   todos?: Todo[];
-  ledger?: { items?: unknown[]; fixed?: Fixed[] } | null;
+  ledger?: { items?: unknown[]; fixed?: Fixed[]; income?: Income[]; goal?: number } | null;
   gcal?: { date: string; events: { time: string; title: string; where?: string }[] } | null;
   routines?: Routine[];
 };
@@ -148,4 +149,27 @@ export function fallbackGreeting(p: Person, i = 0): string {
   ];
   const pool = p.group === "客戶" ? client : friend;
   return pool[i % pool.length];
+}
+
+// 每月收入目標進度（每月 15 日推播）
+export const DEFAULT_GOAL = 180000;
+export function goalProgress(data: JarvisData, now = taipeiNow()) {
+  const goal = Number(data.ledger?.goal) || DEFAULT_GOAL;
+  const ym = now.date.slice(0, 7);
+  const list = (data.ledger?.income ?? []).filter((x) => (x.date || "").startsWith(ym));
+  const sum = list.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const pct = goal ? (sum / goal) * 100 : 0;
+  const pctTxt = `${pct >= 100 ? Math.floor(pct) : Math.round(pct * 10) / 10}%`;
+  const month = now.month + 1;
+  const daysInMonth = new Date(Date.UTC(now.year, now.month + 1, 0)).getUTCDate();
+  const timePct = Math.round((now.day / daysInMonth) * 100);
+  const lines = [`先生，${month} 月已過一半，收入目標進度回報：`, "",
+    `▸ 進度 ${pctTxt}`, `▸ 已進帳 NT$ ${money(sum)} / ${money(goal)}（${list.length} 筆）`];
+  if (sum >= goal) lines.push(`▸ 已超標 NT$ ${money(sum - goal)}`, "", "目標已提前達成。剩下的日子，就當作是額外的紅利吧。");
+  else {
+    const left = goal - sum, days = daysInMonth - now.day;
+    lines.push(`▸ 還差 NT$ ${money(left)}，剩 ${days} 天，平均每天需 NT$ ${money(left / Math.max(days, 1))}`, "",
+      pct >= timePct ? "步調領先時間進度，請保持。" : `時間已走了 ${timePct}%，進度稍微落後，接下來需要加把勁了。`);
+  }
+  return { goal, sum, pct, text: lines.join("\n") };
 }

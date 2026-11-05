@@ -54,6 +54,14 @@
 
   <!-- 核心 -->
   <section class="core-wrap" aria-label="JARVIS 核心">
+    <div class="goal" id="goal" role="group" aria-labelledby="goalLabel">
+      <div class="goal-top">
+        <span class="goal-k" id="goalLabel">本月收入目標</span>
+        <b class="goal-pct" id="goalPct">0%</b>
+      </div>
+      <div class="goal-bar" role="progressbar" aria-labelledby="goalLabel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="goalBar"><span id="goalFill"></span></div>
+      <div class="goal-sub"><span>NT$ <b id="goalNow">0</b> / <span id="goalTarget">–</span></span><span id="goalLeft"></span></div>
+    </div>
     <div class="core">
       <img src="assets/core.jpg" alt="" class="core-img" width="880" height="880">
       <div class="core-glow" aria-hidden="true"></div>
@@ -160,6 +168,16 @@
 <dialog class="dlg wide" id="dlgMoney" aria-labelledby="dm-title">
   <div class="dlg-head"><h3 id="dm-title">金流 / 帳務</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
   <div class="dlg-cols">
+    <section class="income-sec">
+      <h4>收入登打 <small class="hint" id="incHint"></small></h4>
+      <form class="add-row" id="incForm" autocomplete="off">
+        <input id="iDate" type="date" required aria-label="進帳日期">
+        <input id="iAmt" inputmode="decimal" placeholder="金額（台幣）" required>
+        <input id="iNote" placeholder="來源，例：佣金、案件尾款（選填）">
+        <button class="btn" type="submit">新增</button>
+      </form>
+      <ul class="edit-list" id="incList"></ul>
+    </section>
     <section>
       <h4>資產負債</h4>
       <form class="add-row" id="balForm" autocomplete="off">
