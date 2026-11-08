@@ -1,5 +1,5 @@
 // ============================================================
-// J.A.R.V.I.S 推播內容（純函式，沒有外部相依，可在本機測試）
+// A.R.T.H.U.R. 推播內容（純函式，沒有外部相依，可在本機測試）
 // ============================================================
 
 export type Person = { name: string; birthday: string; group: string };
@@ -92,7 +92,7 @@ export function morningBrief(data: JarvisData, clients: { name: string; birthday
   const first = events.find((e) => e.time);
 
   const lines: string[] = [];
-  lines.push("早上好，史塔克先生。");
+  lines.push("早上好，先生。");
   lines.push(`今天您有 ${events.length} 項行程，有 ${clientB.length} 位客戶生日，以及 ${pays.length} 筆即將到期的款項。`);
   lines.push(first ? `您的第一個行程將於 ${first.time} 開始。` : events.length ? "今天的行程都是全天事項。" : "今天沒有排定的行程。");
 

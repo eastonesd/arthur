@@ -1,4 +1,4 @@
-/* JARVIS 設定檔 — 只需要改這裡 */
+/* A.R.T.H.U.R. 設定檔 — 只需要改這裡 */
 window.JARVIS_CONFIG = {
   // Google Cloud 的「OAuth 用戶端 ID」（網頁應用程式類型）。
   // 這串 ID 是公開資訊，可以放進 GitHub；請勿放「用戶端密鑰」(client secret)。

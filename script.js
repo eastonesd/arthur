@@ -1,4 +1,4 @@
-/* JARVIS personal dashboard */
+/* A.R.T.H.U.R. personal dashboard */
 (() => {
   "use strict";
   const CFG = Object.assign({ googleClientId: "", calendarId: "primary", routines: [] }, window.JARVIS_CONFIG || {});
@@ -540,7 +540,7 @@
     const f = e.target.files[0]; if (!f) return;
     try {
       const d = JSON.parse(await f.text());
-      if (d.app !== "jarvis") throw new Error("這不是 JARVIS 的備份檔");
+      if (d.app !== "jarvis") throw new Error("這不是 A.R.T.H.U.R. 的備份檔");
       const st = (arr) => (arr || []).map((x) => ({ ...x, u: Date.now() }));
       state.clients = d.clients || null; state.book = d.book || null; state.people = st(d.people); state.agenda = st(d.agenda); state.todos = st(d.todos);
       state.ledger = d.ledger ? { items: st(d.ledger.items), fixed: st(d.ledger.fixed), income: st(d.ledger.income), goal: GOAL } : null;
@@ -636,7 +636,7 @@
       state.cloudPolicies = p.error ? null : p.count;
       renderPeople();
     }
-    // J.A.R.V.I.S LINE 綁定
+    // A.R.T.H.U.R. LINE 綁定
     async function lineStatus() {
       if (!user) return;
       const { data } = await sb.from("jarvis_line_links").select("linked_at").eq("owner", user.id).maybeSingle();
@@ -667,8 +667,8 @@
         $("pushState").textContent = state; $("pushHint").textContent = hint || "";
         $("pushOn").hidden = !!on || !pushSupported; $("pushTest").hidden = !on; $("pushOff").hidden = !on;
       };
-      if (!pushSupported) return show("不支援", isIOS && !standalone ? "iPhone 要先用 Safari「加入主畫面」，再從主畫面的 JARVIS 開啟，才能開通知（需 iOS 16.4 以上）。" : "這個瀏覽器不支援推播通知。");
-      if (Notification.permission === "denied") return show("已封鎖", "請到手機「設定 → 通知 → JARVIS」打開通知。");
+      if (!pushSupported) return show("不支援", isIOS && !standalone ? "iPhone 要先用 Safari「加入主畫面」，再從主畫面的 A.R.T.H.U.R. 開啟，才能開通知（需 iOS 16.4 以上）。" : "這個瀏覽器不支援推播通知。");
+      if (Notification.permission === "denied") return show("已封鎖", "請到手機「設定 → 通知 → ARTHUR」打開通知。");
       const sub = await currentSub().catch(() => null);
       show(sub ? "已開啟" : "未開啟", sub ? `每天 ${CFG.routines.map((r) => `${r.time} ${r.label}`).join("、")} 會推播提醒。` : "", !!sub);
     }

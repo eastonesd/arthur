@@ -1,5 +1,5 @@
 // ============================================================
-// J.A.R.V.I.S LINE 官方帳號
+// A.R.T.H.U.R. LINE 官方帳號
 // 網址：https://<project>.supabase.co/functions/v1/jarvis-line
 //
 // 1. LINE webhook（帶 x-line-signature）：綁定、解除綁定、「今天」、「待辦」、「進度」、生日祝福按鈕、完成待辦按鈕
@@ -51,7 +51,7 @@ async function line(path: "push" | "reply", body: unknown) {
 }
 const text = (t: string, quickReply?: unknown) => (quickReply ? { type: "text", text: t.slice(0, 4900), quickReply } : { type: "text", text: t.slice(0, 4900) });
 
-// 讀某位使用者的 JARVIS 資料 + 東石系統客戶
+// 讀某位使用者的 A.R.T.H.U.R. 資料 + 東石系統客戶
 async function loadOwner(db: SupabaseClient, owner: string) {
   const [st, cl] = await Promise.all([
     db.from("jarvis_state").select("data").eq("owner", owner).maybeSingle(),
@@ -153,7 +153,7 @@ async function runRoutines(db: SupabaseClient, dryRun: boolean) {
       const entry: Record<string, unknown> = { owner, routine: r.label };
       if (dryRun) { entry.preview = r.msg; out.push(entry); continue; }
       if (!(await claim(db, owner, "routine", `${r.time}|${r.label}`, now.date))) continue;
-      entry.result = await webPush(db, owner, { title: "J.A.R.V.I.S", body: r.msg!, tag: `routine-${r.label}` });
+      entry.result = await webPush(db, owner, { title: "A.R.T.H.U.R.", body: r.msg!, tag: `routine-${r.label}` });
       out.push(entry);
     }
   }
@@ -202,7 +202,7 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
 }
 
 // ---------- webhook ----------
-const HELP = "您好，我是 J.A.R.V.I.S。\n\n綁定方式：\n1. 打開 JARVIS 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「解除綁定」：停止推播";
+const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「解除綁定」：停止推播";
 
 async function handleEvent(db: SupabaseClient, ev: any) {
   const uid: string | undefined = ev.source?.userId;
@@ -261,7 +261,7 @@ async function handleEvent(db: SupabaseClient, ev: any) {
   if (["今天", "今日", "簡報", "早安"].includes(t)) {
     const { data, clients } = await loadOwner(db, link.owner);
     const b = morningBrief(data, clients, now);
-    return void await reply(text(b.text.replace(/^早上好，史塔克先生。/, "史塔克先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
+    return void await reply(text(b.text.replace(/^早上好，先生。/, "先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
   }
   if (["待辦", "TODO"].includes(t)) {
     const { data } = await loadOwner(db, link.owner);
@@ -305,7 +305,7 @@ Deno.serve(async (req) => {
   if (!req.headers.get("x-line-signature") && auth?.startsWith("Bearer ")) {
     const { data: u } = await db.auth.getUser(auth.slice(7));
     if (!u?.user) return corsJson({ error: "unauthorized" }, 401);
-    const r = await webPush(db, u.user.id, { title: "J.A.R.V.I.S", body: "先生，通知已開啟。每天 12:00、17:00、23:00 我會準時提醒您。", tag: "test" });
+    const r = await webPush(db, u.user.id, { title: "A.R.T.H.U.R.", body: "先生，通知已開啟。每天 12:00、17:00、23:00 我會準時提醒您。", tag: "test" });
     return corsJson(r);
   }
 
