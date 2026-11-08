@@ -427,8 +427,11 @@
     const assets = L.items.filter((i) => i.kind === "asset").reduce((s, i) => s + toTWD(i.amount, i.cur), 0);
     const debts = L.items.filter((i) => i.kind === "debt").reduce((s, i) => s + toTWD(i.amount, i.cur), 0);
     const hasUSD = L.items.some((i) => i.cur === "USD");
-    $("nw").textContent = L.items.length ? `NT$ ${money(assets - debts)}` : "–";
-    $("nwSub").textContent = L.items.length ? `資產 ${money(assets)}・負債 ${money(debts)}${hasUSD && !state.fx ? "・美元以 32 估算" : ""}` : "尚未登打資產負債";
+    const show = nwVisible();
+    $("nwToggle").setAttribute("aria-checked", String(show));
+    $("nwToggle").setAttribute("aria-label", show ? "隱藏淨資產" : "顯示淨資產");
+    $("nw").textContent = !L.items.length ? "–" : show ? `NT$ ${money(assets - debts)}` : "＊＊＊＊＊";
+    $("nwSub").textContent = !L.items.length ? "尚未登打資產負債" : show ? `資產 ${money(assets)}・負債 ${money(debts)}${hasUSD && !state.fx ? "・美元以 32 估算" : ""}` : "已隱藏";
     const out = L.fixed.filter((f) => f.dir === "out").reduce((s, f) => s + f.amount, 0);
     const inc = L.fixed.filter((f) => f.dir === "in").reduce((s, f) => s + f.amount, 0);
     $("mOut").textContent = money(out); $("mIn").textContent = money(inc);
@@ -457,6 +460,12 @@
       `<li><span class="n">每月 ${f.day} 號・${esc(f.name)}<small>${f.dir === "out" ? "支出" : "收入"}</small></span><span class="m ${f.dir}">${f.dir === "out" ? "−" : "+"}${money(f.amount)}</span><button class="del" type="button" data-del-fixed="${f.id}" aria-label="刪除 ${esc(f.name)}">刪除</button></li>`
     ).join("") : `<li class="empty-note">例：房租 5 號、信用卡 12 號、薪水 10 號。</li>`;
   }
+  // 淨資產顯示開關：只記在這台裝置，預設隱藏
+  function nwVisible() { try { return localStorage.getItem("jarvis.nwVisible") === "1"; } catch { return false; } }
+  $("nwToggle").addEventListener("click", () => {
+    try { localStorage.setItem("jarvis.nwVisible", nwVisible() ? "0" : "1"); } catch {}
+    renderMoney();
+  });
   function saveLedger(mut) {
     if (!state.ledger) state.ledger = { items: [], fixed: [], income: [] };
     if (!state.ledger.income) state.ledger.income = [];
