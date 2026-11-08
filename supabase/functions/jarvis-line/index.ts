@@ -127,7 +127,7 @@ async function webPush(db: SupabaseClient, owner: string, payload: { title: stri
   if (!subs?.length) return { sent: 0, failed: 0 };
   const k = await vapidKeys(db);
   // Apple 要求 subject 是真實可用的 https 網址或 mailto，否則回 403 BadJwtToken
-  webpush.setVapidDetails(Deno.env.get("JARVIS_PUSH_SUBJECT") || "https://eastonesd.github.io/jarvis/", k.public_key, k.private_key);
+  webpush.setVapidDetails(Deno.env.get("JARVIS_PUSH_SUBJECT") || "https://eastonesd.github.io/arthur/", k.public_key, k.private_key);
   let sent = 0, failed = 0;
   for (const s of subs) {
     try {
