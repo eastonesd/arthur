@@ -261,7 +261,7 @@ async function handleEvent(db: SupabaseClient, ev: any) {
   if (["今天", "今日", "簡報", "早安"].includes(t)) {
     const { data, clients } = await loadOwner(db, link.owner);
     const b = morningBrief(data, clients, now);
-    return void await reply(text(b.text.replace(/^早上好，先生。/, "先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
+    return void await reply(text(b.text.replace(/^早上好，葉里克先生。/, "葉里克先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
   }
   if (["待辦", "TODO"].includes(t)) {
     const { data } = await loadOwner(db, link.owner);
