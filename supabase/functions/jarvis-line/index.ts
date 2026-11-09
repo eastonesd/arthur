@@ -293,6 +293,13 @@ async function handleEvent(db: SupabaseClient, ev: any) {
     const b = morningBrief(data, clients, now, hub);
     return void await reply(text(b.text.replace(/^早上好，葉里克先生。/, "葉里克先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
   }
+  // 只傳「SAGA」或靈感太短：回報工廠狀態＋用法
+  if (/^(SAGA|短劇)[:：]?.{0,3}$/.test(t) && !sagaIdea(String(ev.message.text || ""))) {
+    const { hub } = await loadOwner(db, link.owner);
+    const s = Object.values(hub ?? {}).find((p) => p.kind === "saga");
+    const st = !s ? "" : `SAGA 短劇工廠目前${s.health === "fail" ? "有狀況：" + (s.failed ?? []).map((f) => `「${f.name}」失敗`).join("、") : "運作正常"}。${s.headline ? `\n${s.headline}。` : ""}\n\n`;
+    return void await reply(text(`${st}要開拍新劇，請把靈感寫在冒號後面，例如：\nSAGA：被趕出家門的千金，三年後以神秘投資人身分回歸\n\n我會先跟您確認，再交給工廠。`));
+  }
   const idea = sagaIdea(String(ev.message.text || ""));
   if (idea) {
     await db.from("arthur_pending").delete().eq("owner", link.owner).eq("kind", "saga").lt("created_at", new Date(Date.now() - 86400000).toISOString());
