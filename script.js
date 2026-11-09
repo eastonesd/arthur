@@ -740,6 +740,8 @@
   var projects = (() => {
     let hub = null;
     const HEALTH = { ok: ["正常", "ok"], running: ["執行中", "run"], fail: ["需要處理", "bad"], unknown: ["無法讀取", "unk"] };
+    const AVATAR = { arthur: "assets/projects/arthur.png", "eastone.saga": "assets/projects/saga.png", "eastone.ecommerce": "assets/projects/ec.png", "eastone.trader": "assets/projects/trader.png" };
+    const avatar = (x) => AVATAR[x.repo] ? `<img class="pav" src="${AVATAR[x.repo]}" alt="" width="34" height="34" loading="lazy">` : `<span class="pav pav-txt" aria-hidden="true">${esc((x.name || x.repo).trim().charAt(0))}</span>`;
     const ago = (iso) => {
       if (!iso) return "–";
       const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
@@ -761,7 +763,7 @@
         const fails = (x.failed || []).map((f) => `<li><a href="${esc(f.url)}" target="_blank" rel="noopener">「${esc(f.name)}」失敗</a>・${ago(f.at)}</li>`).join("");
         const metrics = (x.metrics || []).map((m) => `<div class="pm"><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
         return `<article class="proj ${cls}">
-          <header><span class="pdot ${cls}"></span><h4>${esc(x.name)}</h4><span class="ptag ${cls}">${label}</span></header>
+          <header>${avatar(x)}<span class="pdot ${cls}"></span><h4>${esc(x.name)}</h4><span class="ptag ${cls}">${label}</span></header>
           <p class="prepo">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.repo)}</a>` : esc(x.repo)}${x.private ? "・私人" : ""}${x.pushed_at ? `・更新於 ${ago(x.pushed_at)}` : ""}</p>
           ${x.headline ? `<p class="phead">${esc(x.headline)}</p>` : ""}
           ${metrics ? `<div class="pms">${metrics}</div>` : ""}

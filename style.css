@@ -273,3 +273,5 @@ a{color:var(--cyan)}
 .pm b{font:600 15px var(--f-display);color:var(--fg);font-variant-numeric:tabular-nums}
 .pfail{margin:0;padding-left:18px;font-size:13px;color:var(--down)}
 .psite .bad{color:var(--down)}
+.pav{width:34px;height:34px;border-radius:50%;flex:none;object-fit:cover;box-shadow:0 0 0 1px rgba(245,180,58,.55)}
+.pav-txt{display:grid;place-items:center;background:linear-gradient(135deg,#1B2A4A,#121D33);color:var(--gold);font:700 15px var(--f-display)}
