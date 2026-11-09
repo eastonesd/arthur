@@ -248,3 +248,28 @@ a{color:var(--cyan)}
 .btn-link.on .dot-live{display:inline-block}
 
 @media (prefers-reduced-motion:reduce){.core-img,.core-glow,.brand-mark{animation:none}}
+
+/* 專案指揮中心 */
+.proj-btn{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;flex:none}
+.proj-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.proj-dot.ok{background:var(--gold);box-shadow:0 0 8px rgba(245,180,58,.7)}
+.proj-dot.run{background:var(--cyan,#4fd1ff);box-shadow:0 0 8px rgba(79,209,255,.7)}
+.proj-dot.bad{background:var(--down);box-shadow:0 0 8px var(--down);animation:pdot 1.4s ease-in-out infinite}
+@keyframes pdot{50%{opacity:.35}}
+.proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:10px 0 14px}
+.proj{border:1px solid var(--line-strong);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0;background:rgba(255,255,255,.02)}
+.proj.bad{border-color:color-mix(in srgb,var(--down) 60%,transparent)}
+.proj header{display:flex;align-items:center;gap:8px}
+.proj h4{margin:0;font-size:15px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--muted)}
+.pdot.ok{background:var(--gold)}.pdot.run{background:var(--cyan,#4fd1ff)}.pdot.bad{background:var(--down)}
+.ptag{font-size:12px;padding:1px 8px;border-radius:999px;border:1px solid var(--line-strong);color:var(--muted);flex:none}
+.ptag.ok{color:var(--gold);border-color:rgba(245,180,58,.45)}.ptag.bad{color:var(--down);border-color:var(--down)}.ptag.run{color:var(--cyan,#4fd1ff)}
+.prepo,.pnote,.psite{margin:0;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.prepo a,.psite a,.pfail a{color:inherit}
+.phead{margin:0;font-size:14px}
+.pms{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:6px}
+.pm{display:flex;flex-direction:column;font-size:12px;color:var(--muted)}
+.pm b{font:600 15px var(--f-display);color:var(--fg);font-variant-numeric:tabular-nums}
+.pfail{margin:0;padding-left:18px;font-size:13px;color:var(--down)}
+.psite .bad{color:var(--down)}

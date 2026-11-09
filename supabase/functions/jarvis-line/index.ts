@@ -18,7 +18,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.1
 import webpush from "npm:web-push@3.6.7";
 import {
   type JarvisData, type Person, eventReminderText, eveningTodos, everyone, birthdaysOn,
-  fallbackGreeting, goalProgress, morningBrief, openTodos, routinesDue, taipeiNow, upcomingEvents,
+  type HubStatus, fallbackGreeting, goalProgress, morningBrief, openTodos, routinesDue, taipeiNow, upcomingEvents,
 } from "./brief.ts";
 
 const SECRET = () => Deno.env.get("JARVIS_LINE_CHANNEL_SECRET") ?? "";
@@ -51,17 +51,19 @@ async function line(path: "push" | "reply", body: unknown) {
 }
 const text = (t: string, quickReply?: unknown) => (quickReply ? { type: "text", text: t.slice(0, 4900), quickReply } : { type: "text", text: t.slice(0, 4900) });
 
-// 讀某位使用者的 A.R.T.H.U.R. 資料 + 東石系統客戶
+// 讀某位使用者的 A.R.T.H.U.R. 資料 + 東石系統客戶 + 專案狀態
 async function loadOwner(db: SupabaseClient, owner: string) {
-  const [st, cl] = await Promise.all([
+  const [st, cl, hb] = await Promise.all([
     db.from("jarvis_state").select("data").eq("owner", owner).maybeSingle(),
     db.from("clients").select("name:data->>name, birthday:data->>birthday").eq("owner", owner),
+    db.from("arthur_hub").select("status").eq("owner", owner).maybeSingle(),
   ]);
+  const hub = (hb.data?.status ?? null) as HubStatus | null;
   const data = (st.data?.data ?? {}) as JarvisData;
   const clients = ((cl.data ?? []) as { name: string | null; birthday: string | null }[])
     .filter((c) => c.name && c.birthday && /^\d{4}-\d{2}-\d{2}/.test(c.birthday))
     .map((c) => ({ name: c.name!.trim(), birthday: c.birthday!.slice(0, 10) }));
-  return { data, clients };
+  return { data, clients, hub };
 }
 
 // 已推播過就不再推（同一天、同一件事）
@@ -167,10 +169,10 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
   if (error) throw error;
   const out = [];
   for (const link of links ?? []) {
-    const { data, clients } = await loadOwner(db, link.owner);
+    const { data, clients, hub } = await loadOwner(db, link.owner);
     let msg: unknown = null, kind = task, ref = now.date;
     if (task === "morning") {
-      const b = morningBrief(data, clients, now);
+      const b = morningBrief(data, clients, now, hub);
       msg = text(b.text, b.birthdays.length ? greetButton(now.date) : undefined);
     } else if (task === "tick") {
       const up = upcomingEvents(data, now);
@@ -201,8 +203,28 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
   return { today: now.date, task, dry_run: dryRun, report: out, routines };
 }
 
+// ---------- SAGA：從 LINE 送靈感 ----------
+// 傳「SAGA：一句靈感」→ 先確認（開拍／取消）→ 在 eastone.saga 開「新劇」Issue，工廠就會自動企劃
+const SAGA_REPO = () => Deno.env.get("ARTHUR_SAGA_REPO") || "eastonesd/eastone.saga";
+async function sagaCreate(idea: string) {
+  const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
+  if (!token) return { ok: false, msg: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN），我暫時無法替您開拍。" };
+  const res = await fetch(`https://api.github.com/repos/${SAGA_REPO()}/issues`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json", "User-Agent": "arthur" },
+    body: JSON.stringify({
+      title: "新劇：" + idea.slice(0, 24), labels: ["新劇"],
+      body: `### 靈感\n\n${idea}\n\n### 類型\n\n_No response_\n\n### 畫風\n\n_No response_\n\n### 集數\n\n60\n\n### 每集長度（秒）\n\n90\n\n> 由 A.R.T.H.U.R. 從 LINE 送出`,
+    }),
+  });
+  if (!res.ok) return { ok: false, msg: `GitHub 回應 ${res.status}，沒有送出。請確認金鑰對 eastone.saga 有 Issues 寫入權限。` };
+  const j = await res.json();
+  return { ok: true, msg: `已交給 SAGA 工廠，第 ${j.number} 號劇開始企劃。\n大約幾分鐘後會寫好角色表與 60 集大綱，進度可以在 SAGA App 查看：\nhttps://eastonesd.github.io/eastone.saga/#/s/${j.number}` };
+}
+const sagaIdea = (raw: string) => raw.trim().match(/^(?:SAGA|saga|Saga|短劇)\s*[:：]\s*([\s\S]{4,})$/)?.[1]?.trim();
+
 // ---------- webhook ----------
-const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「解除綁定」：停止推播";
+const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「SAGA：一句靈感」：交給短劇工廠開拍\n・「解除綁定」：停止推播";
 
 async function handleEvent(db: SupabaseClient, ev: any) {
   const uid: string | undefined = ev.source?.userId;
@@ -221,6 +243,14 @@ async function handleEvent(db: SupabaseClient, ev: any) {
       const people = birthdaysOn(everyone(data, clients), d.slice(6) || now.date);
       if (!people.length) return void await reply(text("今天沒有壽星，先生。"));
       return void await reply(...greetingMessages(await writeGreetings(people)));
+    }
+    if (d.startsWith("saga:") || d.startsWith("saga-no:")) {
+      const id = d.slice(d.indexOf(":") + 1);
+      const { data: p } = await db.from("arthur_pending").delete().eq("id", id).eq("owner", link.owner).select("payload").maybeSingle();
+      if (!p) return void await reply(text("這個請求已經處理過或過期了。"));
+      if (d.startsWith("saga-no:")) return void await reply(text("好的，已取消。"));
+      const r = await sagaCreate(String(p.payload.idea));
+      return void await reply(text(r.msg));
     }
     if (d.startsWith("done:")) {
       const id = d.slice(5);
@@ -259,9 +289,21 @@ async function handleEvent(db: SupabaseClient, ev: any) {
     return;
   }
   if (["今天", "今日", "簡報", "早安"].includes(t)) {
-    const { data, clients } = await loadOwner(db, link.owner);
-    const b = morningBrief(data, clients, now);
+    const { data, clients, hub } = await loadOwner(db, link.owner);
+    const b = morningBrief(data, clients, now, hub);
     return void await reply(text(b.text.replace(/^早上好，葉里克先生。/, "葉里克先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
+  }
+  const idea = sagaIdea(String(ev.message.text || ""));
+  if (idea) {
+    await db.from("arthur_pending").delete().eq("owner", link.owner).eq("kind", "saga").lt("created_at", new Date(Date.now() - 86400000).toISOString());
+    const { data: p, error } = await db.from("arthur_pending").insert({ owner: link.owner, kind: "saga", payload: { idea: idea.slice(0, 500) } }).select("id").single();
+    if (error) throw error;
+    return void await reply(text(`要把這個靈感交給 SAGA 工廠開拍嗎？\n\n「${idea.slice(0, 200)}」\n\n預設 60 集、每集 90 秒，類型與畫風由編劇部判斷。`, {
+      items: [
+        { type: "action", action: { type: "postback", label: "開拍", data: `saga:${p.id}`, displayText: "開拍" } },
+        { type: "action", action: { type: "postback", label: "取消", data: `saga-no:${p.id}`, displayText: "取消" } },
+      ],
+    }));
   }
   if (["待辦", "TODO"].includes(t)) {
     const { data } = await loadOwner(db, link.owner);

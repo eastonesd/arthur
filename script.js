@@ -710,8 +710,8 @@
     function syncRoutines() { /* merge() 一律寫入 config.js 的 routines */ }
     async function onUser(u) {
       user = u || null;
-      if (!user) { state.cloudClients = null; state.cloudPolicies = null; lastSync = null; renderStatus(); renderPeople(); return; }
-      renderStatus(); await pull(); syncRoutines(); await loadClients(); lineStatus();
+      if (!user) { state.cloudClients = null; state.cloudPolicies = null; lastSync = null; renderStatus(); renderPeople(); projects.load(); return; }
+      renderStatus(); await pull(); syncRoutines(); await loadClients(); lineStatus(); projects.load();
     }
     if (sb) {
       sb.auth.getSession().then(({ data }) => onUser(data.session?.user));
@@ -730,9 +730,66 @@
     $("logoutBtn").addEventListener("click", () => sb && sb.auth.signOut());
     $("syncNow").addEventListener("click", async () => { await pull(); await loadClients(); });
     return {
+      sb, get user() { return user; },
       renderStatus, lineStatus, pushStatus,
       schedulePush() { if (!user) return; clearTimeout(timer); timer = setTimeout(sync, 1200); },
     };
+  })();
+
+  /* ---------- 專案指揮中心 ---------- */
+  var projects = (() => {
+    let hub = null;
+    const HEALTH = { ok: ["正常", "ok"], running: ["執行中", "run"], fail: ["需要處理", "bad"], unknown: ["無法讀取", "unk"] };
+    const ago = (iso) => {
+      if (!iso) return "–";
+      const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+      return m < 1 ? "剛剛" : m < 60 ? `${m} 分鐘前` : m < 1440 ? `${Math.round(m / 60)} 小時前` : `${Math.round(m / 1440)} 天前`;
+    };
+    const list = () => (hub?.projects || []).map((p) => ({ ...p, ...(hub.status?.[p.repo] || { health: "unknown", note: "尚未檢查" }) }));
+    function render() {
+      const btn = $("projBtn");
+      btn.hidden = !hub;
+      if (!hub) return;
+      const items = list();
+      const bad = items.filter((x) => x.health === "fail").length;
+      $("projDot").className = `proj-dot ${bad ? "bad" : items.some((x) => x.health === "running") ? "run" : "ok"}`;
+      btn.title = bad ? `${bad} 個專案需要處理` : "所有專案正常";
+      btn.setAttribute("aria-label", `專案，${btn.title}`);
+      $("projMeta").textContent = hub.scanned_at ? `上次檢查：${ago(hub.scanned_at)}・每 30 分鐘自動檢查，失敗時 LINE 通知` : "尚未檢查";
+      $("projGrid").innerHTML = items.map((x) => {
+        const [label, cls] = HEALTH[x.health] || HEALTH.unknown;
+        const fails = (x.failed || []).map((f) => `<li><a href="${esc(f.url)}" target="_blank" rel="noopener">「${esc(f.name)}」失敗</a>・${ago(f.at)}</li>`).join("");
+        const metrics = (x.metrics || []).map((m) => `<div class="pm"><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
+        return `<article class="proj ${cls}">
+          <header><span class="pdot ${cls}"></span><h4>${esc(x.name)}</h4><span class="ptag ${cls}">${label}</span></header>
+          <p class="prepo">${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.repo)}</a>` : esc(x.repo)}${x.private ? "・私人" : ""}${x.pushed_at ? `・更新於 ${ago(x.pushed_at)}` : ""}</p>
+          ${x.headline ? `<p class="phead">${esc(x.headline)}</p>` : ""}
+          ${metrics ? `<div class="pms">${metrics}</div>` : ""}
+          ${fails ? `<ul class="pfail">${fails}</ul>` : ""}
+          ${x.note ? `<p class="pnote">${esc(x.note)}</p>` : ""}
+          ${x.site ? `<p class="psite"><a href="${esc(x.site.url)}" target="_blank" rel="noopener">開啟網站</a>${x.site.ok ? "" : `<span class="bad">・打不開（${x.site.code || "連不上"}）</span>`}</p>` : ""}
+          ${x.kind === "readonly" ? `<p class="pnote">只讀監看：A.R.T.H.U.R. 不會對這個專案下任何指令。</p>` : ""}
+        </article>`;
+      }).join("");
+    }
+    async function load() {
+      const sb = cloud?.sb, user = cloud?.user;
+      if (!sb || !user) { hub = null; render(); return; }
+      const { data } = await sb.from("arthur_hub").select("projects, status, scanned_at").eq("owner", user.id).maybeSingle();
+      hub = data || null; render();
+    }
+    $("projBtn").addEventListener("click", () => { render(); open("dlgProjects"); });
+    $("projScan").addEventListener("click", async () => {
+      const sb = cloud?.sb; if (!sb) return;
+      $("projScan").disabled = true; $("projMsg").textContent = "檢查中，約需 10 秒…";
+      const { data, error } = await sb.functions.invoke("arthur-hub", { body: { action: "scan" } });
+      $("projScan").disabled = false;
+      if (error || !data?.ok) { $("projMsg").textContent = "檢查失敗，請稍後再試。"; return; }
+      $("projMsg").textContent = data.throttled ? "10 分鐘內已檢查過，顯示上次結果（設定 GitHub 金鑰後可隨時檢查）。" : "已更新。";
+      hub = { ...hub, status: data.status, scanned_at: data.scanned_at }; render();
+    });
+    setInterval(() => { if (!document.hidden) load(); }, 10 * 60000);
+    return { load };
   })();
 
   /* ---------- 安裝成 App ---------- */

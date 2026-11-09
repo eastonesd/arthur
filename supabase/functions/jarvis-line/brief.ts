@@ -16,6 +16,21 @@ export type JarvisData = {
   routines?: Routine[];
 };
 export type Routine = { label: string; time: string; msg?: string };
+export type HubStatus = Record<string, { name: string; repo: string; kind: string; health: string; headline?: string; failed?: { name: string; at: string }[]; site?: { ok: boolean } | null }>;
+
+// 早安簡報的「專案」段落：有狀況的專案 + 有成果的專案
+export function projectLines(hub: HubStatus | null | undefined): string[] {
+  if (!hub) return [];
+  const all = Object.values(hub);
+  const lines: string[] = [];
+  for (const p of all.filter((x) => x.health === "fail")) {
+    const why = (p.failed ?? []).map((f) => `「${f.name}」失敗`).concat(p.site && !p.site.ok ? ["網站打不開"] : []);
+    lines.push(`・⚠️ ${p.name}：${why.join("、") || "需要處理"}`);
+  }
+  for (const p of all.filter((x) => x.headline && !x.headline.startsWith("示範模式") && x.health !== "fail" && (x.kind === "saga" || x.kind === "ec" || x.kind === "generic"))) lines.push(`・${p.name}：${p.headline}`);
+  if (!lines.length) return [];
+  return ["", "🛠 專案", ...lines.slice(0, 6)];
+}
 
 // 生活提醒預設值（儀表板可改，存在 jarvis_state.routines）
 export const DEFAULT_ROUTINES: Routine[] = [
@@ -83,7 +98,7 @@ export function openTodos(data: JarvisData, dateIso: string) {
 }
 
 // 早安簡報
-export function morningBrief(data: JarvisData, clients: { name: string; birthday: string }[], now = taipeiNow()) {
+export function morningBrief(data: JarvisData, clients: { name: string; birthday: string }[], now = taipeiNow(), hub?: HubStatus | null) {
   const events = todaysEvents(data, now.date);
   const bdays = birthdaysOn(everyone(data, clients), now.date);
   const clientB = bdays.filter((p) => p.group === "客戶"), otherB = bdays.filter((p) => p.group !== "客戶");
@@ -114,6 +129,7 @@ export function morningBrief(data: JarvisData, clients: { name: string; birthday
     todos.slice(0, 6).forEach((t) => lines.push(`・${t.title}${t.overdue ? "（已逾期）" : t.today ? "（今天）" : t.due ? `（${+t.due.slice(5, 7)}/${+t.due.slice(8)}）` : ""}`));
     if (todos.length > 6) lines.push(`・…另有 ${todos.length - 6} 項`);
   }
+  lines.push(...projectLines(hub));
   if (bdays.length) lines.push("", "需為您準備生日祝福嗎？");
   return { text: lines.join("\n"), birthdays: bdays, events, todos };
 }

@@ -31,6 +31,7 @@
     <span class="date" id="date">----/--/--</span>
     <span class="time" id="time">--:--</span>
     <button class="btn-link" id="installBtn" type="button" hidden>安裝 App</button>
+    <button class="btn-link proj-btn" id="projBtn" type="button" hidden><i class="proj-dot" id="projDot"></i>專案</button>
     <button class="btn-link" id="syncBtn" type="button">登入同步</button>
     <button class="btn-link" id="googleBtn" type="button">連接 Google</button>
   </div>
@@ -243,6 +244,14 @@
     <input type="file" id="restoreInput" accept=".json,application/json" hidden>
     <span class="hint" id="backupHint"></span>
   </div>
+</dialog>
+
+<!-- 專案指揮中心 -->
+<dialog class="dlg wide" id="dlgProjects" aria-labelledby="dpj-title">
+  <div class="dlg-head"><h3 id="dpj-title">專案指揮中心</h3><button class="x" type="button" data-close aria-label="關閉">×</button></div>
+  <p class="hint" id="projMeta">讀取中…</p>
+  <div class="proj-grid" id="projGrid"></div>
+  <div class="dlg-foot"><button class="btn-ghost" id="projScan" type="button">立即檢查</button><span class="hint" id="projMsg"></span></div>
 </dialog>
 
 <!-- Google 帳號 -->

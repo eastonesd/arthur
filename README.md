@@ -78,6 +78,40 @@
 
 LINE 免費方案每月 200 則推播；回覆訊息（「今天」「待辦」、祝福按鈕）不計入。
 
+## 專案指揮中心
+
+右上角「專案」列出所有 eastone 專案的狀態（燈號：金＝正常、藍＝執行中、紅＝需要處理），資料來自 Supabase Edge Function `arthur-hub`（原始碼 `supabase/functions/arthur-hub/`），每 30 分鐘自動檢查一次：
+
+- 最後一次推送、每個 GitHub Actions 流程最近一次的結果、GitHub Pages 網站是否打得開。
+- 24 小時內新出現的失敗，會用 LINE 通知一次（同一個失敗不重複通知）。
+- 成果：SAGA（劇數、完成集數、7 天產出）、蝦皮分潤機器人（佣金、成交、發文數）。早安簡報會附上「🛠 專案」段落。
+- 監看哪些 repo 存在 `arthur_hub.projects`；`kind` 為 `readonly` 的專案（量化交易）只監看，不接受任何指令。
+
+### 其他專案的統一回報格式
+
+任何 repo 只要在根目錄放一個 `arthur.json`，A.R.T.H.U.R. 就會把它顯示在專案卡片與早安簡報：
+
+```json
+{
+  "headline": "今天選出 3 檔觀察股",
+  "metrics": [{ "label": "觀察清單", "value": "12 檔" }, { "label": "近 7 天訊號", "value": "4 次" }],
+  "updated_at": "2026-11-10T08:00:00+08:00"
+}
+```
+
+### LINE 指令：SAGA 開拍
+
+在 LINE 傳「SAGA：一句靈感」，A.R.T.H.U.R. 先請您確認（開拍／取消），按「開拍」後在 eastone.saga 開一張「新劇」Issue，工廠就會自動企劃（預設 60 集、每集 90 秒）。
+
+### GitHub 金鑰（ARTHUR_GITHUB_TOKEN）
+
+沒有金鑰時只能讀公開 repo，且每小時最多檢查一次；私人 repo（eastone.dpf、eastone.trader）與 LINE 開拍都需要金鑰：
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token。
+2. Repository access：Only select repositories，勾選所有 eastone 專案與 arthur。
+3. Permissions：Actions、Contents、Pages、Metadata 設 Read-only；**Issues 設 Read and write**（用於 SAGA 開拍）。
+4. Supabase 專案 → Edge Functions → Secrets 新增 `ARTHUR_GITHUB_TOKEN`。
+
 ## 目前限制
 
 - **TimeTree**：官方已停止提供公開 API，無法直接串接。建議把行程放在 Google 日曆，或在 TimeTree 與 Google 日曆之間手動同步。
