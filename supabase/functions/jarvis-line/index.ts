@@ -234,7 +234,7 @@ const sagaIdea = (raw: string) => raw.trim().match(/^(?:SAGA|saga|Saga|短劇)\s
 // 圖文選單按鈕 → 回覆填寫格式；使用者照格式回傳 → 確認（開始／取消）→ 執行
 const FORMS = {
   saga: { head: "SAGA開拍", title: "SAGA 短劇工廠", fields: [["靈感", "一句話的故事點子（必填）"], ["集數", "60"], ["每集秒數", "90"]] },
-  ec: { head: "EC上架", title: "東石電商（蝦皮分潤）", fields: [["商品名稱", "（必填）"], ["分潤連結", "https://s.shopee.tw/…（必填）"], ["分類", "例：保護貼"], ["價格", "189"], ["佣金比例", "例：10%"], ["賣點", "一句話"]] },
+  ec: { head: "EC上架", title: "東石電商（蝦皮分潤）", fields: [["商品名稱", "（必填）"], ["分潤連結", "s.shopee.tw 開頭的網址（必填）"], ["分類", "例：保護貼"], ["價格", "189"], ["佣金比例", "例：10%"], ["賣點", "一句話"]] },
   dpf: { head: "DPF生成", title: "AI 數位商品工廠", fields: [["商品名稱", "（必填）"], ["目標客群", ""], ["商品類型", "例：電子書、模板、課程講義"], ["痛點", ""], ["解決的問題", ""], ["預期售價", "例：399"], ["參考資料", ""], ["特別要求", ""]] },
 } as const;
 type FormKind = keyof typeof FORMS;
@@ -383,7 +383,18 @@ async function handleEvent(db: SupabaseClient, ev: any) {
       const { data: p } = await db.from("arthur_pending").delete().eq("id", id).eq("owner", link.owner).select("kind, payload").maybeSingle();
       if (!p) return void await reply(text("這個請求已經處理過或過期了。"));
       if (d.startsWith("form-no:")) return void await reply(text("好的，已取消。"));
-      return void await reply(text(await runForm(db, link.owner, p.kind as FormKind, p.payload as Record<string, string>)));
+      const msg = await runForm(db, link.owner, p.kind as FormKind, p.payload as Record<string, string>);
+      // 失敗（金鑰、權限）時保留表單，修好之後按「重試」就好，不用重填
+      if (/失敗|還沒設定|GitHub 回應/.test(msg)) {
+        const { data: again } = await db.from("arthur_pending").insert({ owner: link.owner, kind: p.kind, payload: p.payload }).select("id").single();
+        if (again) return void await reply(text(msg + "\n\n修好之後按「重試」，不用重填。", {
+          items: [
+            { type: "action", action: { type: "postback", label: "重試", data: `form:${again.id}`, displayText: "重試" } },
+            { type: "action", action: { type: "postback", label: "取消", data: `form-no:${again.id}`, displayText: "取消" } },
+          ],
+        }));
+      }
+      return void await reply(text(msg));
     }
     if (d.startsWith("saga:") || d.startsWith("saga-no:")) {
       const id = d.slice(d.indexOf(":") + 1);
