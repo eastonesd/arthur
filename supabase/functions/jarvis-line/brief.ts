@@ -152,12 +152,12 @@ export function eveningTodos(data: JarvisData, now = taipeiNow()) {
   return openTodos(data, now.date).filter((t) => t.today || t.overdue);
 }
 
-// 沒有 AI 金鑰時使用的祝福範本
+// 祝福範本：客戶固定用公版；朋友家人在沒有 AI 金鑰時用這裡的範本
 export function fallbackGreeting(p: Person, i = 0): string {
   const name = p.name;
+  // 客戶一律用這則公版（固定文字，不交給 AI 改寫）
   const client = [
-    `${name}您好，祝您生日快樂！感謝這段時間的信任與支持，願新的一歲身體健康、平安順心，有任何需要我都在。`,
-    `${name}生日快樂！祝您新的一年事事順利、闔家平安。謝謝您一直以來的支持，有需要隨時找我。`,
+    `${name}您好，祝您生日快樂！感謝這段時間的信任與支持，願新的一歲身體健康、平安順心，有任何保險及金融相關需求我都在。`,
   ];
   const friend = [
     `${name}生日快樂！🎉 新的一歲繼續發光，願你健康、快樂，想做的事都順順利利！`,

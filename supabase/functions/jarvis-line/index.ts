@@ -76,12 +76,19 @@ async function unclaim(db: SupabaseClient, owner: string, kind: string, ref: str
 }
 
 // ---------- 生日祝福 ----------
-async function writeGreetings(people: Person[]): Promise<{ name: string; text: string }[]> {
+// 客戶：固定公版。朋友、家人等：有 AI 金鑰就由 AI 寫，沒有就用範本。
+async function writeGreetings(all: Person[]): Promise<{ name: string; text: string }[]> {
+  const ai = await aiGreetings(all.filter((p) => p.group !== "客戶"));
+  let k = 0;
+  return all.map((p) => ({ name: p.name, text: p.group === "客戶" ? fallbackGreeting(p) : ai.find((a) => a.name === p.name)?.text ?? fallbackGreeting(p, k++) }));
+}
+
+async function aiGreetings(people: Person[]): Promise<{ name: string; text: string }[]> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (key && people.length) {
     try {
       const prompt = `請用繁體中文（台灣用語）幫一位保險業務員寫 LINE 生日祝福，每人一則，60 到 90 字，溫暖自然、不浮誇、不推銷。` +
-        `「客戶」用敬語並帶一句感謝支持；「朋友」「家人」「重要的人」語氣親切，可用一個表情符號。不要提年齡。` +
+        `語氣親切，可用一個表情符號。不要提年齡。` +
         `只回傳 JSON 陣列，格式 [{"name":"…","text":"…"}]，不要其他文字。\n名單：` +
         JSON.stringify(people.map((p) => ({ name: p.name, relation: p.group })));
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -98,7 +105,7 @@ async function writeGreetings(people: Person[]): Promise<{ name: string; text: s
       } else console.error("anthropic", res.status, await res.text());
     } catch (e) { console.error("greeting AI failed", e); }
   }
-  return people.map((p, i) => ({ name: p.name, text: fallbackGreeting(p, i) }));
+  return [];
 }
 
 function greetingMessages(list: { name: string; text: string }[]) {
