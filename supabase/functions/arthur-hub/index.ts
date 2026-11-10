@@ -185,11 +185,51 @@ async function scanOwner(db: SupabaseClient, row: any, notify: boolean) {
   return { owner: row.owner, scanned: results.length, alerts: alerts.length, status };
 }
 
+// ---------- DPF 收件匣 ----------
+async function sha256hex(t: string) {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function dpfInbox(db: SupabaseClient, token: string, body: any) {
+  if (token.length < 32) return { error: "unauthorized" };
+  const { data: dev } = await db.from("arthur_device_tokens").select("owner").eq("token_hash", await sha256hex(token)).eq("kind", "dpf").maybeSingle();
+  if (!dev) return { error: "unauthorized" };
+  const owner = dev.owner;
+  if (body.action === "claim") {
+    // 領走超過 30 分鐘沒回報的，視為電腦中途關機，放回待處理
+    await db.from("arthur_dpf_inbox").update({ status: "pending", claimed_at: null }).eq("owner", owner).eq("status", "claimed").lt("claimed_at", new Date(Date.now() - 30 * 60000).toISOString());
+    const { data: rows } = await db.from("arthur_dpf_inbox").select("id").eq("owner", owner).eq("status", "pending").order("created_at").limit(3);
+    const ids = (rows ?? []).map((r) => r.id);
+    if (!ids.length) return { ok: true, items: [] };
+    const { data: items } = await db.from("arthur_dpf_inbox").update({ status: "claimed", claimed_at: new Date().toISOString() }).in("id", ids).eq("status", "pending").select("id, brief, created_at");
+    return { ok: true, items: items ?? [] };
+  }
+  if (body.action === "done" && body.id) {
+    const ok = body.ok !== false;
+    const { data: row } = await db.from("arthur_dpf_inbox").update({ status: ok ? "done" : "failed", product_id: body.product_id ?? null, note: String(body.note ?? "").slice(0, 500) })
+      .eq("id", body.id).eq("owner", owner).select("brief").maybeSingle();
+    if (!row) return { error: "not found" };
+    const { data: link } = await db.from("jarvis_line_links").select("line_user_id").eq("owner", owner).maybeSingle();
+    if (link?.line_user_id) {
+      const title = row.brief?.title ?? "";
+      await pushLine(link.line_user_id, ok
+        ? `先生，DPF 已建立「${title}」${body.note ? `：${body.note}` : "。"}\n請到電腦上的 DPF 後台審核企劃。`
+        : `先生，DPF 處理「${title}」時出了狀況：${body.note || "未知錯誤"}`);
+    }
+    return { ok: true };
+  }
+  return { error: "unknown action" };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return new Response("ok");
   const db = adminClient();
   const body = await req.json().catch(() => ({}));
+
+  // DPF（使用者電腦上的 Docker app）來領取 LINE 送來的商品需求；用裝置金鑰認證
+  const dpfToken = req.headers.get("x-dpf-token");
+  if (dpfToken !== null) return json(await dpfInbox(db, dpfToken, body));
 
   // 排程
   const cron = req.headers.get("x-cron-token");
