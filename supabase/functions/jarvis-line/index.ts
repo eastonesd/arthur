@@ -213,7 +213,7 @@ async function runTask(db: SupabaseClient, task: string, dryRun: boolean) {
 // ---------- SAGA：從 LINE 送靈感 ----------
 // 傳「SAGA：一句靈感」→ 先確認（開拍／取消）→ 在 eastone.saga 開「新劇」Issue，工廠就會自動企劃
 const SAGA_REPO = () => Deno.env.get("ARTHUR_SAGA_REPO") || "eastonesd/eastone.saga";
-async function sagaCreate(idea: string) {
+async function sagaCreate(idea: string, eps = 60, secs = 90) {
   const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
   if (!token) return { ok: false, msg: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN），我暫時無法替您開拍。" };
   const res = await fetch(`https://api.github.com/repos/${SAGA_REPO()}/issues`, {
@@ -221,17 +221,139 @@ async function sagaCreate(idea: string) {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json", "User-Agent": "arthur" },
     body: JSON.stringify({
       title: "新劇：" + idea.slice(0, 24), labels: ["新劇"],
-      body: `### 靈感\n\n${idea}\n\n### 類型\n\n_No response_\n\n### 畫風\n\n_No response_\n\n### 集數\n\n60\n\n### 每集長度（秒）\n\n90\n\n> 由 A.R.T.H.U.R. 從 LINE 送出`,
+      body: `### 靈感\n\n${idea}\n\n### 類型\n\n_No response_\n\n### 畫風\n\n_No response_\n\n### 集數\n\n${Math.min(Math.max(Math.round(eps), 1), 120)}\n\n### 每集長度（秒）\n\n${Math.min(Math.max(Math.round(secs), 15), 180)}\n\n> 由 A.R.T.H.U.R. 從 LINE 送出`,
     }),
   });
   if (!res.ok) return { ok: false, msg: `GitHub 回應 ${res.status}，沒有送出。請確認金鑰對 eastone.saga 有 Issues 寫入權限。` };
   const j = await res.json();
-  return { ok: true, msg: `已交給 SAGA 工廠，第 ${j.number} 號劇開始企劃。\n大約幾分鐘後會寫好角色表與 60 集大綱，進度可以在 SAGA App 查看：\nhttps://eastonesd.github.io/eastone.saga/#/s/${j.number}` };
+  return { ok: true, msg: `已交給 SAGA 工廠，第 ${j.number} 號劇開始企劃。\n大約幾分鐘後會寫好角色表與分集大綱，進度可以在 SAGA App 查看：\nhttps://eastonesd.github.io/eastone.saga/#/s/${j.number}` };
 }
 const sagaIdea = (raw: string) => raw.trim().match(/^(?:SAGA|saga|Saga|短劇)\s*[:：]\s*([\s\S]{4,})$/)?.[1]?.trim();
 
+// ---------- 工作選單：SAGA／EC／DPF 表單 ----------
+// 圖文選單按鈕 → 回覆填寫格式；使用者照格式回傳 → 確認（開始／取消）→ 執行
+const FORMS = {
+  saga: { head: "SAGA開拍", title: "SAGA 短劇工廠", fields: [["靈感", "一句話的故事點子（必填）"], ["集數", "60"], ["每集秒數", "90"]] },
+  ec: { head: "EC上架", title: "東石電商（蝦皮分潤）", fields: [["商品名稱", "（必填）"], ["分潤連結", "https://s.shopee.tw/…（必填）"], ["分類", "例：保護貼"], ["價格", "189"], ["佣金比例", "例：10%"], ["賣點", "一句話"]] },
+  dpf: { head: "DPF生成", title: "AI 數位商品工廠", fields: [["商品名稱", "（必填）"], ["目標客群", ""], ["商品類型", "例：電子書、模板、課程講義"], ["痛點", ""], ["解決的問題", ""], ["預期售價", "例：399"], ["參考資料", ""], ["特別要求", ""]] },
+} as const;
+type FormKind = keyof typeof FORMS;
+
+function formTemplate(kind: FormKind) {
+  const f = FORMS[kind];
+  return [f.head, ...f.fields.map(([k]) => `${k}：`)].join("\n");
+}
+function formHelp(kind: FormKind) {
+  const f = FORMS[kind];
+  return `【${f.title}】請長按複製下一則訊息，填好冒號後面再傳回來：\n` + f.fields.map(([k, h]) => `・${k}${h ? `：${h}` : ""}`).join("\n");
+}
+function parseForm(raw: string): { kind: FormKind; data: Record<string, string> } | null {
+  const lines = raw.trim().split(/\r?\n/);
+  const head = (lines[0] || "").replace(/\s+/g, "").toUpperCase();
+  const kind = (Object.keys(FORMS) as FormKind[]).find((k) => head === FORMS[k].head.toUpperCase());
+  if (!kind) return null;
+  const data: Record<string, string> = {};
+  let last = "";
+  for (const line of lines.slice(1)) {
+    const m = line.match(/^\s*([^：:]{1,8}?)\s*[：:]\s*(.*)$/);
+    if (m && FORMS[kind].fields.some(([k]) => k === m[1].trim())) { last = m[1].trim(); data[last] = m[2].trim(); }
+    else if (last && line.trim()) data[last] = (data[last] ? data[last] + "\n" : "") + line.trim(); // 多行內容接在上一欄
+  }
+  return { kind, data };
+}
+const num = (s?: string) => { const n = Number(String(s ?? "").replace(/[^\d.]/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
+
+function formCheck(kind: FormKind, d: Record<string, string>): string | null {
+  if (kind === "saga" && (d["靈感"] ?? "").length < 4) return "請寫下「靈感」，至少 4 個字。";
+  if (kind === "ec") {
+    if (!d["商品名稱"]) return "請填「商品名稱」。";
+    if (!/^https:\/\/(s\.shopee\.tw|shopee\.tw)\//.test(d["分潤連結"] ?? "")) return "「分潤連結」要是蝦皮的網址（https://s.shopee.tw/…）。";
+  }
+  if (kind === "dpf" && !d["商品名稱"]) return "請填「商品名稱」。";
+  return null;
+}
+function formSummary(kind: FormKind, d: Record<string, string>) {
+  const shown = Object.entries(d).filter(([, v]) => v).map(([k, v]) => `・${k}：${v.length > 80 ? v.slice(0, 80) + "…" : v}`).join("\n");
+  const what = { saga: "交給 SAGA 工廠開拍", ec: "加入佇列並開始發文", dpf: "交給 DPF 產生商品企劃" }[kind];
+  return `要${what}嗎？\n\n${shown}`;
+}
+
+const ghHeaders = (token: string) => ({ Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json", "User-Agent": "arthur" });
+const b64encode = (s: string) => { const b = new TextEncoder().encode(s); let bin = ""; for (const x of b) bin += String.fromCharCode(x); return btoa(bin); };
+const b64decode = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, "")), (c) => c.charCodeAt(0)));
+const yq = (v: string) => JSON.stringify(v); // JSON 字串也是合法的 YAML 字串
+
+async function ecEnqueue(d: Record<string, string>) {
+  const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
+  if (!token) return "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN），暫時無法加入佇列。";
+  const repo = Deno.env.get("ARTHUR_EC_REPO") || "eastonesd/eastone.ecommerce";
+  const url = `https://api.github.com/repos/${repo}/contents/queue.yaml`;
+  const cur = await fetch(url, { headers: ghHeaders(token) });
+  if (!cur.ok) return `讀取 queue.yaml 失敗（GitHub ${cur.status}），請確認金鑰對 ${repo} 有 Contents 讀寫權限。`;
+  const j = await cur.json();
+  let yaml = b64decode(j.content);
+  const rate = num(d["佣金比例"]);
+  const item = [`  - name: ${yq(d["商品名稱"])}`, `    link: ${yq(d["分潤連結"])}`];
+  if (d["分類"]) item.push(`    keyword: ${yq(d["分類"])}`);
+  if (num(d["價格"])) item.push(`    price: ${num(d["價格"])}`);
+  if (rate) item.push(`    commission_rate: ${rate > 1 ? rate / 100 : rate}`);
+  if (d["賣點"]) item.push(`    note: ${yq(d["賣點"])}`);
+  if (/^items:\s*\[\s*\]\s*$/m.test(yaml)) yaml = yaml.replace(/^items:\s*\[\s*\]\s*$/m, "items:");
+  if (!/^items:\s*$/m.test(yaml)) yaml = yaml.replace(/\s*$/, "\n\nitems:\n");
+  yaml = yaml.replace(/\s*$/, "\n") + item.join("\n") + "\n";
+  const put = await fetch(url, { method: "PUT", headers: ghHeaders(token), body: JSON.stringify({
+    message: `LINE 加入商品：${d["商品名稱"].slice(0, 40)}`, content: b64encode(yaml), sha: j.sha,
+    committer: { name: "A.R.T.H.U.R.", email: "arthur@users.noreply.github.com" } }) });
+  if (!put.ok) return `寫入 queue.yaml 失敗（GitHub ${put.status}），請確認金鑰有 Contents 寫入權限。`;
+  return `已加入「${d["商品名稱"]}」。蝦皮機器人約 1～2 分鐘內會挑選並發文到 Threads。`;
+}
+
+async function dpfEnqueue(db: SupabaseClient, owner: string, d: Record<string, string>) {
+  const price = num(d["預期售價"]);
+  const brief = {
+    title: d["商品名稱"].slice(0, 120), audience: d["目標客群"] ?? "", product_type: (d["商品類型"] ?? "").slice(0, 120),
+    pain_points: d["痛點"] ?? "", problem: d["解決的問題"] ?? "", language: "zh-TW",
+    target_price_twd: price ? Math.round(price) : null,
+    reference_notes: (d["參考資料"] ?? "").slice(0, 20000), special_requests: d["特別要求"] ?? "",
+  };
+  const { error } = await db.from("arthur_dpf_inbox").insert({ owner, brief });
+  if (error) throw error;
+  return `已送到 DPF：「${brief.title}」。\n電腦上的 DPF（START.bat）開著時，約 1 分鐘內會建立商品並開始產生 AI 企劃；完成後我會通知您，企劃請到 DPF 後台審核。`;
+}
+
+async function runForm(db: SupabaseClient, owner: string, kind: FormKind, d: Record<string, string>) {
+  if (kind === "saga") return (await sagaCreate(d["靈感"], num(d["集數"]) ?? 60, num(d["每集秒數"]) ?? 90)).msg;
+  if (kind === "ec") return await ecEnqueue(d);
+  return await dpfEnqueue(db, owner, d);
+}
+
+// ---------- 圖文選單（排程 task: "richmenu" 建立一次即可） ----------
+async function setupRichMenu() {
+  const api = (path: string, init: RequestInit = {}, host = "api.line.me") =>
+    fetch(`https://${host}/v2/bot/richmenu${path}`, { ...init, headers: { Authorization: `Bearer ${TOKEN()}`, ...(init.headers ?? {}) } });
+  const w = 2500, h = 843, third = Math.round(w / 3);
+  const areas = (["saga", "ec", "dpf"] as const).map((k, i) => ({
+    bounds: { x: i * third, y: 0, width: i === 2 ? w - 2 * third : third, height: h },
+    action: { type: "postback", data: `menu:${k}`, displayText: { saga: "SAGA 開拍", ec: "EC 發文", dpf: "DPF 生成商品" }[k] },
+  }));
+  const create = await api("", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+    size: { width: w, height: h }, selected: true, name: "arthur-studio", chatBarText: "東石工作室", areas }) });
+  if (!create.ok) return { step: "create", status: create.status, text: await create.text() };
+  const { richMenuId } = await create.json();
+  const img = await fetch(Deno.env.get("ARTHUR_RICHMENU_IMAGE") || "https://eastonesd.github.io/arthur/assets/richmenu.png");
+  if (!img.ok) return { step: "image-fetch", status: img.status };
+  const up = await api(`/${richMenuId}/content`, { method: "POST", headers: { "Content-Type": "image/png" }, body: await img.arrayBuffer() }, "api-data.line.me");
+  if (!up.ok) return { step: "upload", status: up.status, text: await up.text() };
+  const def = await fetch(`https://api.line.me/v2/bot/user/all/richmenu/${richMenuId}`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN()}` } });
+  if (!def.ok) return { step: "default", status: def.status, text: await def.text() };
+  // 清掉舊的同名選單
+  const list = await (await api("/list")).json().catch(() => ({ richmenus: [] }));
+  for (const m of list.richmenus ?? []) if (m.name === "arthur-studio" && m.richMenuId !== richMenuId) await api(`/${m.richMenuId}`, { method: "DELETE" });
+  return { ok: true, richMenuId };
+}
+
 // ---------- webhook ----------
-const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「SAGA：一句靈感」：交給短劇工廠開拍\n・「解除綁定」：停止推播";
+const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「SAGA：一句靈感」：交給短劇工廠開拍\n・下方選單：SAGA 開拍／EC 發文／DPF 生成商品\n・「解除綁定」：停止推播";
 
 async function handleEvent(db: SupabaseClient, ev: any) {
   const uid: string | undefined = ev.source?.userId;
@@ -250,6 +372,18 @@ async function handleEvent(db: SupabaseClient, ev: any) {
       const people = birthdaysOn(everyone(data, clients), d.slice(6) || now.date);
       if (!people.length) return void await reply(text("今天沒有壽星，先生。"));
       return void await reply(...greetingMessages(await writeGreetings(people)));
+    }
+    if (d.startsWith("menu:")) {
+      const kind = d.slice(5) as FormKind;
+      if (!(kind in FORMS)) return;
+      return void await reply(text(formHelp(kind)), text(formTemplate(kind)));
+    }
+    if (d.startsWith("form:") || d.startsWith("form-no:")) {
+      const id = d.slice(d.indexOf(":") + 1);
+      const { data: p } = await db.from("arthur_pending").delete().eq("id", id).eq("owner", link.owner).select("kind, payload").maybeSingle();
+      if (!p) return void await reply(text("這個請求已經處理過或過期了。"));
+      if (d.startsWith("form-no:")) return void await reply(text("好的，已取消。"));
+      return void await reply(text(await runForm(db, link.owner, p.kind as FormKind, p.payload as Record<string, string>)));
     }
     if (d.startsWith("saga:") || d.startsWith("saga-no:")) {
       const id = d.slice(d.indexOf(":") + 1);
@@ -299,6 +433,20 @@ async function handleEvent(db: SupabaseClient, ev: any) {
     const { data, clients, hub } = await loadOwner(db, link.owner);
     const b = morningBrief(data, clients, now, hub);
     return void await reply(text(b.text.replace(/^早上好，葉里克先生。/, "葉里克先生，這是今天的簡報。"), b.birthdays.length ? greetButton(now.date) : undefined));
+  }
+  const form = parseForm(String(ev.message.text || ""));
+  if (form) {
+    const bad = formCheck(form.kind, form.data);
+    if (bad) return void await reply(text(bad), text(formTemplate(form.kind)));
+    await db.from("arthur_pending").delete().eq("owner", link.owner).lt("created_at", new Date(Date.now() - 86400000).toISOString());
+    const { data: p, error } = await db.from("arthur_pending").insert({ owner: link.owner, kind: form.kind, payload: form.data }).select("id").single();
+    if (error) throw error;
+    return void await reply(text(formSummary(form.kind, form.data), {
+      items: [
+        { type: "action", action: { type: "postback", label: "開始", data: `form:${p.id}`, displayText: "開始" } },
+        { type: "action", action: { type: "postback", label: "取消", data: `form-no:${p.id}`, displayText: "取消" } },
+      ],
+    }));
   }
   // 只傳「SAGA」或靈感太短：回報工廠狀態＋用法
   if (/^(SAGA|短劇)[:：]?.{0,3}$/.test(t) && !sagaIdea(String(ev.message.text || ""))) {
@@ -352,6 +500,7 @@ Deno.serve(async (req) => {
     const { data: allowed } = await db.rpc("check_reminder_token", { t: cron });
     if (!allowed) return json({ error: "unauthorized" }, 401);
     const body = await req.json().catch(() => ({}));
+    if (body.task === "richmenu") return json(await setupRichMenu());
     try { return json(await runTask(db, String(body.task || "morning"), !!body.dry_run)); }
     catch (e) { return json({ error: String(e) }, 500); }
   }
