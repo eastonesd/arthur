@@ -16,8 +16,8 @@
   const SYNCED = ["people", "ledger", "agenda", "todos", "gcal", "routines", "tomb"];    // 會同步到 Supabase 的資料
   const state = {
     events: null, mail: null, fx: null,
-    clients: store.get(KEYS.clients),               // imported from 東石系統
-    book: store.get(KEYS.book),                     // policy stats from 東石系統
+    clients: store.get(KEYS.clients),               // imported from 東石保險服務平台
+    book: store.get(KEYS.book),                     // policy stats from 東石保險服務平台
     people: store.get(KEYS.people, []),             // typed in by hand
     ledger: store.get(KEYS.ledger, null),           // { items:[], fixed:[] }
     agenda: store.get(KEYS.agenda, []),             // 手動登打的行程
@@ -25,7 +25,7 @@
     gcal: store.get(KEYS.gcal, null),               // 今天的 Google 日曆（給 LINE 推播用）
     routines: store.get(KEYS.routines, null),       // 生活提醒（以 config.js 為準，同步給後端推播）
     tomb: store.get(KEYS.tomb, {}),                 // 已刪除項目的 id → 刪除時間（合併同步時才知道哪些是真的刪掉）
-    cloudClients: null, cloudPolicies: null,        // 從東石系統（Supabase）讀到的客戶
+    cloudClients: null, cloudPolicies: null,        // 從東石保險服務平台（Supabase）讀到的客戶
   };
   // 本機儲存 + 排程上傳雲端
   function persist() {
@@ -113,7 +113,7 @@
   const hasPeopleData = () => clientSource().length > 0 || state.people.length > 0;
   function everyone() {
     if (!hasPeopleData()) return SAMPLE_PEOPLE;
-    // 生日簿裡已有的人，以生日簿的分類為準（例如東石系統裡的下屬歸為朋友）
+    // 生日簿裡已有的人，以生日簿的分類為準（例如東石保險服務平台裡的下屬歸為朋友）
     const own = new Set(state.people.map((p) => p.name));
     return [...clientSource().filter((c) => !own.has(c.name)).map((c) => ({ ...c, group: "客戶" })), ...state.people];
   }
@@ -129,10 +129,10 @@
       .map(([k, arr]) => `<li><span class="k">${k}${arr.length ? `<small>${esc(names(arr))}</small>` : ""}</span><span class="v">${arr.length}</span></li>`);
     rows.push(`<li><span class="k">生日簿人數</span><span class="v">${list.length}</span></li>`);
     const policies = state.cloudPolicies ?? state.book?.policies;
-    if (policies != null) rows.push(`<li><span class="k">有效保單<small>東石系統</small></span><span class="v">${policies}</span></li>`);
+    if (policies != null) rows.push(`<li><span class="k">有效保單<small>東石保險</small></span><span class="v">${policies}</span></li>`);
     $("clientStats").innerHTML = rows.join("");
     const tag = $("clientTag");
-    tag.textContent = state.cloudClients ? "東石系統" : live ? "已登錄" : "範例"; tag.classList.toggle("live", live);
+    tag.textContent = state.cloudClients ? "東石保險" : live ? "已登錄" : "範例"; tag.classList.toggle("live", live);
     state.bdayWeek = week.length;
     drawRadar(list);
     renderAgenda();
@@ -165,7 +165,7 @@
       return `<li><span class="n">${esc(p.name)}<small>${esc(p.group)}</small></span><span class="m">${mdLabel(p.birthday)}${d === 0 ? "・今天" : `・${d} 天後`}</span><button class="del" type="button" data-del-person="${p.id}" aria-label="刪除 ${esc(p.name)}">刪除</button></li>`;
     }).join("") : `<li class="empty-note">還沒有手動登打的生日。</li>`;
     const n = (state.clients || []).length;
-    $("importHint").textContent = state.cloudClients ? `已連線東石系統，客戶 ${state.cloudClients.length} 位` : n ? `已匯入東石系統客戶 ${n} 位` : "";
+    $("importHint").textContent = state.cloudClients ? `已連線東石保險服務平台，客戶 ${state.cloudClients.length} 位` : n ? `已匯入東石保險服務平台客戶 ${n} 位` : "";
     $("clearImport").hidden = !n;
   }
   $("openPeople").addEventListener("click", () => { renderPeopleDialog(); open("dlgPeople"); $("pName").focus(); });
@@ -188,7 +188,7 @@
     store.set(KEYS.clients, null); store.set(KEYS.book, null); renderPeople();
   });
 
-  /* 匯入：東石系統 clients.db（sql.js 讀 SQLite）或 CSV */
+  /* 匯入：東石保險服務平台 clients.db（sql.js 讀 SQLite）或 CSV */
   function parseCSV(text) {
     const rows = []; let row = [], cell = "", q = false;
     for (let i = 0; i < text.length; i++) {
@@ -635,7 +635,7 @@
       finally { busy = false; if (again) { again = false; sync(); } }
     }
     const pull = sync;
-    // 東石系統的客戶（唯讀）
+    // 東石保險服務平台的客戶（唯讀）
     async function loadClients() {
       if (!user) return;
       const c = await sb.from("clients").select("name:data->>name, birthday:data->>birthday");

@@ -7,7 +7,7 @@ window.JARVIS_CONFIG = {
   // 要讀取的 Google 日曆，"primary" 代表主要日曆
   calendarId: "primary",
 
-  // Supabase（與東石系統共用同一個專案）。
+  // Supabase（與東石保險服務平台共用同一個專案）。
   // publishable key 是公開金鑰，資料由資料表的 RLS 保護，可以放進 GitHub；
   // 請勿放 service_role / secret key。
   supabaseUrl: "https://kocyedkngpxckixtudku.supabase.co",
