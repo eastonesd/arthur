@@ -794,7 +794,7 @@
       $("modeProj").title = bad ? `${bad} 個專案需要處理` : "所有專案正常";
       renderTiles(items);
       if ($("grid").dataset.mode === "proj") renderSummary();
-      $("projMeta").textContent = hub.scanned_at ? `上次檢查：${ago(hub.scanned_at)}・每 30 分鐘自動檢查，失敗時 LINE 通知` : "尚未檢查";
+      $("projMeta").textContent = hub.scanned_at ? `上次檢查：${ago(hub.scanned_at)}・每 10 分鐘自動檢查，進度與異常送到 Discord` : "尚未檢查";
       $("projGrid").innerHTML = items.map((x) => {
         const [label, cls] = HEALTH[x.health] || HEALTH.unknown;
         const fails = (x.failed || []).map((f) => `<li><a href="${esc(f.url)}" target="_blank" rel="noopener">「${esc(f.name)}」失敗</a>・${ago(f.at)}</li>`).join("");

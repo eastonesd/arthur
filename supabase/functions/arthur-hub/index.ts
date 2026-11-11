@@ -8,7 +8,7 @@
 //   ・其他專案：repo 根目錄若有 arthur.json（統一回報格式，見 README）就一併讀取
 //
 // 呼叫方式：
-//   x-cron-token + {task:"scan"}   排程每 30 分鐘；新出現的失敗會推 LINE
+//   x-cron-token + {task:"scan"}   排程每 10 分鐘；新成果與失敗送 Discord（未設定時退回 LINE）
 //   Authorization: Bearer <使用者 JWT> + {action:"scan"}   儀表板「立即檢查」
 //
 // Secrets：ARTHUR_GITHUB_TOKEN（fine-grained，唯讀即可；沒有時只能看公開 repo，且每小時最多檢查一次）
@@ -156,14 +156,69 @@ async function pushLine(to: string, text: string) {
   return res.ok;
 }
 
+// ---------- Discord 通知（有設定頻道就送 Discord，沒有就退回 LINE） ----------
+const DISCORD_BOT = () => Deno.env.get("DISCORD_BOT_TOKEN") ?? "";
+const KIND_OF: Record<string, string> = { "eastone.saga": "saga", "eastone.ecommerce": "ec", "eastone.dpf": "dpf" };
+const KIND_NAME: Record<string, string> = { saga: "東石影音", ec: "東石電商", dpf: "東石數位", arthur: "A.R.T.H.U.R." };
+const AV = (k: string) => `https://eastonesd.github.io/arthur/assets/projects/${k === "arthur" ? "arthur" : k}.png`;
+type Embed = { title: string; text?: string; url?: string; color?: number };
+async function discordChannels(db: SupabaseClient, owner: string): Promise<Record<string, string>> {
+  if (!DISCORD_BOT()) return {};
+  const { data } = await db.from("arthur_discord").select("channels").eq("owner", owner).maybeSingle();
+  return (data?.channels ?? {}) as Record<string, string>;
+}
+async function discordSend(channels: Record<string, string>, kind: string, e: Embed) {
+  const id = channels[kind] ?? channels.arthur;
+  if (!id) return false;
+  const k = channels[kind] ? kind : "arthur";
+  const r = await fetch(`https://discord.com/api/v10/channels/${id}/messages`, {
+    method: "POST", headers: { Authorization: `Bot ${DISCORD_BOT()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ embeds: [{ title: e.title.slice(0, 256), description: e.text?.slice(0, 4000), url: e.url, color: e.color ?? 0xf5b43a,
+      author: { name: KIND_NAME[k], icon_url: AV(k) }, footer: { text: "A.R.T.H.U.R." }, timestamp: new Date().toISOString() }] }),
+  });
+  if (!r.ok) console.error("discord", r.status, await r.text());
+  return r.ok;
+}
+const metricNum = (st: any, label: string) => { const m = (st?.metrics ?? []).find((x: Metric) => x.label === label); const n = m ? Number(String(m.value).replace(/[^\d.]/g, "")) : NaN; return Number.isFinite(n) ? n : null; };
+
+// 新成果：東石影音新集數／新劇、東石電商新貼文（跟上一次掃描比較；第一次掃描不通知）
+async function projectEvents(ghOwner: string, prev: Record<string, any>, results: RepoStatus[]): Promise<{ kind: string; e: Embed }[]> {
+  const out: { kind: string; e: Embed }[] = [];
+  for (const r of results) {
+    const p = prev[r.repo];
+    if (!p?.metrics?.length || !r.metrics?.length) continue;
+    if (r.kind === "saga") {
+      const e0 = metricNum(p, "已完成集數"), e1 = metricNum(r, "已完成集數"), s0 = metricNum(p, "劇數"), s1 = metricNum(r, "劇數");
+      if (s0 !== null && s1 !== null && s1 > s0) out.push({ kind: "saga", e: { title: `新劇開拍（共 ${s1} 部）`, text: "編劇部正在寫角色表與分集大綱。", url: "https://eastonesd.github.io/eastone.saga/" } });
+      if (e0 !== null && e1 !== null && e1 > e0) out.push({ kind: "saga", e: { title: `新完成 ${e1 - e0} 集`, text: `累計已完成 ${e1} 集。`, url: "https://eastonesd.github.io/eastone.saga/" } });
+    }
+    if (r.kind === "ec") {
+      const n0 = metricNum(p, "發文數"), n1 = metricNum(r, "發文數");
+      if (n0 !== null && n1 !== null && n1 > n0) {
+        try {
+          const posts = await ghJSON(ghOwner, r.repo, "dashboard/data/posts.json") as any[];
+          for (const post of posts.slice(-(n1 - n0)).slice(-5))
+            out.push({ kind: "ec", e: { title: `已發文：${post.name}`, url: post.permalink,
+              text: `${String(post.text ?? "").split("\n")[0].slice(0, 200)}\n\n價格 NT$${post.price ?? "–"}・佣金 ${post.commission_rate ? Math.round(post.commission_rate * 1000) / 10 + "%" : "–"}` } });
+        } catch { out.push({ kind: "ec", e: { title: `新發文 ${n1 - n0} 篇`, text: `累計 ${n1} 篇。` } }); }
+      }
+    }
+  }
+  return out;
+}
+
 // 檢查一位使用者的全部專案；notify = 有新失敗時推 LINE
 async function scanOwner(db: SupabaseClient, row: any, notify: boolean) {
   const projects: Project[] = row.projects ?? [];
+  const prev = (row.status ?? {}) as Record<string, any>;
   const results = await Promise.all(projects.map((p) => checkRepo(row.gh_owner, p).catch((e) => ({ name: p.name, repo: p.repo, kind: p.kind, health: "unknown", note: String(e).slice(0, 80), checked_at: new Date().toISOString() } as RepoStatus))));
   const status = Object.fromEntries(results.map((r) => [r.repo, r]));
   await db.from("arthur_hub").update({ status, scanned_at: new Date().toISOString() }).eq("owner", row.owner);
 
   const alerts: string[] = [];
+  // 新成果（新集數、新貼文）不論是排程或手動檢查都要通知，否則手動檢查會把這次的差異吃掉
+  const channels = await discordChannels(db, row.owner);
+  for (const ev of await projectEvents(row.gh_owner, prev, results)) await discordSend(channels, ev.kind, ev.e);
   if (notify) {
     const { data: link } = await db.from("jarvis_line_links").select("line_user_id").eq("owner", row.owner).maybeSingle();
     const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
@@ -177,6 +232,8 @@ async function scanOwner(db: SupabaseClient, row: any, notify: boolean) {
         const { data: seen } = await db.from("jarvis_push_log").select("ref").eq("owner", row.owner).eq("kind", "ci").eq("ref", it.ref).limit(1);
         if (seen?.length) continue;
         await db.from("jarvis_push_log").insert({ owner: row.owner, kind: "ci", ref: it.ref, sent_on: today });
+        // 有 Discord 就送到該專案的頻道，沒有才走 LINE
+        if (await discordSend(channels, KIND_OF[r.repo] ?? "arthur", { title: `${r.name} 出了狀況`, text: it.text.replace(/^・/, ""), color: 0xff7a7a })) continue;
         alerts.push(it.text);
       }
     }
@@ -209,9 +266,12 @@ async function dpfInbox(db: SupabaseClient, token: string, body: any) {
     const { data: row } = await db.from("arthur_dpf_inbox").update({ status: ok ? "done" : "failed", product_id: body.product_id ?? null, note: String(body.note ?? "").slice(0, 500) })
       .eq("id", body.id).eq("owner", owner).select("brief").maybeSingle();
     if (!row) return { error: "not found" };
-    const { data: link } = await db.from("jarvis_line_links").select("line_user_id").eq("owner", owner).maybeSingle();
+    const title = row.brief?.title ?? "";
+    const sent = await discordSend(await discordChannels(db, owner), "dpf", ok
+      ? { title: `已建立「${title}」`, text: `${body.note || "已排入 AI 企劃"}\n請到電腦上的 DPF 後台審核企劃。` }
+      : { title: `處理「${title}」時出了狀況`, text: body.note || "未知錯誤", color: 0xff7a7a });
+    const { data: link } = sent ? { data: null } : await db.from("jarvis_line_links").select("line_user_id").eq("owner", owner).maybeSingle();
     if (link?.line_user_id) {
-      const title = row.brief?.title ?? "";
       await pushLine(link.line_user_id, ok
         ? `先生，DPF 已建立「${title}」${body.note ? `：${body.note}` : "。"}\n請到電腦上的 DPF 後台審核企劃。`
         : `先生，DPF 處理「${title}」時出了狀況：${body.note || "未知錯誤"}`);
