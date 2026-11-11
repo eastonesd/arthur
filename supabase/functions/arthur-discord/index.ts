@@ -8,13 +8,15 @@
 //    /dpf   開表單 → 東石數位收件匣，電腦上的 DPF 領取後產生企劃
 //    /channel 把目前頻道設為某個專案的通知頻道
 //    /status  專案狀態
+//    /allow、/deny  讓伺服器裡的某個人可以（或不再可以）使用這些指令
 // 2. 排程／管理（x-cron-token）：
 //    {task:"setup"}  註冊指令到伺服器、依頻道名稱自動對應通知頻道
 //    {task:"test"}   每個通知頻道各發一則測試訊息
+//    {task:"line-menu-off"}  撤掉 LINE 的 SAGA／EC／DPF 圖文選單（工作改到 Discord）
 //
 // Secrets：DISCORD_BOT_TOKEN、ARTHUR_GITHUB_TOKEN（DISCORD_PUBLIC_KEY、DISCORD_APP_ID 有預設值，可覆寫）
 // verify_jwt 關閉：改用 Discord 簽章與 cron token 驗證。
-// 只有第一位使用指令的人（葉里克先生）可以操作；其他人會被拒絕。
+// 第一位使用指令的人自動成為主人；主人（或已授權的人）用 /allow 把其他人加進來。
 // ============================================================
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
 
@@ -61,6 +63,10 @@ const COMMANDS = [
   { name: "ec", description: "東石電商：加入商品並發文到 Threads" },
   { name: "dpf", description: "東石數位：產生一個數位商品企劃" },
   { name: "status", description: "查看所有專案狀態" },
+  { name: "allow", description: "讓這個人也可以使用 A.R.T.H.U.R. 的所有指令",
+    options: [{ type: 6, name: "user", description: "要加入的人", required: true }] },
+  { name: "deny", description: "不再讓這個人使用 A.R.T.H.U.R. 的指令",
+    options: [{ type: 6, name: "user", description: "要移除的人", required: true }] },
   { name: "channel", description: "把這個頻道設為某個專案的通知頻道",
     options: [{ type: 3, name: "project", description: "哪個專案的通知要送到這裡", required: true, choices: PROJECT_CHOICES }] },
 ];
@@ -166,7 +172,7 @@ async function getLink(db: SupabaseClient) {
   const { data: hub } = await db.from("arthur_hub").select("owner").limit(1).maybeSingle();
   if (!hub) return null;
   const { data } = await db.from("arthur_discord").select("*").eq("owner", hub.owner).maybeSingle();
-  return data ?? { owner: hub.owner, guild_id: null, discord_user_id: null, channels: {} };
+  return data ?? { owner: hub.owner, guild_id: null, discord_user_id: null, allowed_users: [], channels: {} };
 }
 async function send(channelId: string, kind: string, e: { title: string; text?: string; url?: string; color?: number }) {
   const r = await bot(`/channels/${channelId}/messages`, { method: "POST", body: JSON.stringify({ embeds: [{
@@ -195,7 +201,7 @@ async function setup(db: SupabaseClient) {
     if (c.type !== 0) continue;
     for (const [k, re] of RULES) if (!channels[k] && !matched[k] && re.test(c.name)) { matched[k] = c.name; channels[k] = c.id; }
   }
-  await db.from("arthur_discord").upsert({ owner: link.owner, guild_id: guild.id, discord_user_id: link.discord_user_id, channels, updated_at: new Date().toISOString() });
+  await db.from("arthur_discord").upsert({ owner: link.owner, guild_id: guild.id, discord_user_id: link.discord_user_id, allowed_users: link.allowed_users ?? [], channels, updated_at: new Date().toISOString() });
   const names = Object.fromEntries((Array.isArray(chans) ? chans : []).map((c: any) => [c.id, c.name]));
   return { ok: true, guild: guild.name, commands: regText, channels: Object.fromEntries(Object.entries(channels).map(([k, id]) => [k, names[id] ?? id])),
     all_text_channels: (Array.isArray(chans) ? chans : []).filter((c: any) => c.type === 0).map((c: any) => c.name) };
@@ -209,19 +215,31 @@ async function interaction(db: SupabaseClient, body: any) {
   const uid = body.member?.user?.id ?? body.user?.id;
   const link = await getLink(db);
   if (!link) return reply("A.R.T.H.U.R. 尚未設定。");
-  // 第一位使用者綁定為主人
+  // 第一位使用者綁定為主人；其他人要由已授權的人用 /allow 加入
+  const allowed = new Set<string>([link.discord_user_id, ...(link.allowed_users ?? [])].filter(Boolean));
+  const save = (patch: Record<string, unknown>) => db.from("arthur_discord").upsert({ owner: link.owner, guild_id: body.guild_id ?? link.guild_id,
+    discord_user_id: link.discord_user_id, allowed_users: link.allowed_users ?? [], channels: link.channels ?? {}, ...patch, updated_at: new Date().toISOString() });
   if (!link.discord_user_id) {
     link.discord_user_id = uid;
-    await db.from("arthur_discord").upsert({ owner: link.owner, guild_id: body.guild_id ?? link.guild_id, discord_user_id: uid, channels: link.channels ?? {}, updated_at: new Date().toISOString() });
-  } else if (link.discord_user_id !== uid) return reply("抱歉，只有葉里克先生可以使用 A.R.T.H.U.R. 的指令。");
+    await save({ discord_user_id: uid });
+  } else if (!allowed.has(uid)) return reply("抱歉，您還沒有使用權限。請葉里克先生用 /allow 把您加進來。");
 
   if (body.type === 2) {
     const name = body.data?.name;
     if (name in FORMS) return json(modal(name));
+    if (name === "allow" || name === "deny") {
+      const target = String(body.data.options?.[0]?.value ?? "");
+      if (!target) return reply("請選擇一個人。");
+      if (name === "deny" && target === link.discord_user_id) return reply("主人不能被移除。");
+      const list = new Set<string>(link.allowed_users ?? []);
+      if (name === "allow") list.add(target); else list.delete(target);
+      await save({ allowed_users: [...list] });
+      return reply(name === "allow" ? `好的，<@${target}> 現在可以使用 A.R.T.H.U.R. 的所有指令了。` : `好的，<@${target}> 不再能使用 A.R.T.H.U.R. 的指令。`, false);
+    }
     if (name === "channel") {
       const kind = body.data.options?.[0]?.value;
       const channels = { ...(link.channels ?? {}), [kind]: body.channel_id };
-      await db.from("arthur_discord").upsert({ owner: link.owner, guild_id: body.guild_id ?? link.guild_id, discord_user_id: link.discord_user_id, channels, updated_at: new Date().toISOString() });
+      await save({ channels });
       return reply(`好的，${KIND_NAME[kind]} 的通知之後都送到這個頻道。`);
     }
     if (name === "status") {
@@ -272,6 +290,20 @@ Deno.serve(async (req) => {
       for (const [k, id] of Object.entries((link?.channels ?? {}) as Record<string, string>))
         out[k] = await send(id, k, { title: `${KIND_NAME[k]} 通知頻道已連線`, text: k === "arthur" ? "先生，A.R.T.H.U.R. 已就位。其他專案的狀況與總覽會送到這裡。" : `之後 ${KIND_NAME[k]} 的進度、成果與異常都會送到這裡。輸入 /${k} 可以開表單開工。` });
       return json(out);
+    }
+    if (body.task === "line-menu-off") {
+      // 工作入口搬到 Discord：撤掉 LINE 預設圖文選單並刪除 arthur-studio 選單（LINE 金鑰是專案共用的 secret）
+      const LT = Deno.env.get("JARVIS_LINE_CHANNEL_ACCESS_TOKEN") ?? "";
+      if (!LT) return json({ error: "沒有 LINE 金鑰" });
+      const H = { Authorization: `Bearer ${LT}` };
+      const off = await fetch("https://api.line.me/v2/bot/user/all/richmenu", { method: "DELETE", headers: H });
+      const list = await (await fetch("https://api.line.me/v2/bot/richmenu/list", { headers: H })).json().catch(() => ({ richmenus: [] }));
+      const removed = [];
+      for (const m of list.richmenus ?? []) if (m.name === "arthur-studio") {
+        const r = await fetch(`https://api.line.me/v2/bot/richmenu/${m.richMenuId}`, { method: "DELETE", headers: H });
+        removed.push({ id: m.richMenuId, ok: r.ok });
+      }
+      return json({ default_off: off.status, removed });
     }
     return json({ error: "unknown task" }, 400);
   }

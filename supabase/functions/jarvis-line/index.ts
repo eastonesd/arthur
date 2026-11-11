@@ -353,7 +353,7 @@ async function setupRichMenu() {
 }
 
 // ---------- webhook ----------
-const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「SAGA：一句靈感」：交給短劇工廠開拍\n・下方選單：SAGA 開拍／EC 發文／DPF 生成商品\n・「解除綁定」：停止推播";
+const HELP = "您好，我是 A.R.T.H.U.R.\n\n綁定方式：\n1. 打開 A.R.T.H.U.R. 儀表板，點右上「登入同步」\n2. 按「綁定 LINE」產生 8 碼綁定碼\n3. 把綁定碼傳到這裡\n\n綁定後可以傳：\n・「今天」：今日簡報\n・「待辦」：未完成的待辦\n・「進度」：本月收入目標進度\n・「SAGA：一句靈感」：交給短劇工廠開拍\n・「解除綁定」：停止推播";
 
 async function handleEvent(db: SupabaseClient, ev: any) {
   const uid: string | undefined = ev.source?.userId;
