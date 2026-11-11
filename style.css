@@ -335,3 +335,4 @@ a{color:var(--cyan)}
 .pt-close b{font:600 16px var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap}
 .pt-close.pt-pay{border-color:var(--line);background:transparent;padding:3px 10px}
 .pt-close.pt-pay b{font-size:13.5px;color:var(--fg)}
+.routine small{font-size:12px;color:var(--muted);margin-left:-2px}

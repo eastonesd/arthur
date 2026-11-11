@@ -79,7 +79,8 @@
   const open = (id) => { const d = $(id); if (d.showModal) d.showModal(); else d.setAttribute("open", ""); };
 
   /* ---------- routines ---------- */
-  $("routines").innerHTML = CFG.routines.map((r) => `<span class="routine">${esc(r.label)} <b>${esc(r.time)}</b></span>`).join("");
+  // at＝事情的時間（顯示），time＝提醒推播的時間；兩者不同時一併標出
+  $("routines").innerHTML = CFG.routines.map((r) => `<span class="routine">${esc(r.label)} <b>${esc(r.at || r.time)}</b>${r.at && r.at !== r.time ? `<small>${esc(r.time)} 提醒</small>` : ""}</span>`).join("");
 
   /* ---------- dates ---------- */
   function valid(y, mo, d) {
@@ -680,7 +681,7 @@
       if (!pushSupported) return show("不支援", isIOS && !standalone ? "iPhone 要先用 Safari「加入主畫面」，再從主畫面的 A.R.T.H.U.R. 開啟，才能開通知（需 iOS 16.4 以上）。" : "這個瀏覽器不支援推播通知。");
       if (Notification.permission === "denied") return show("已封鎖", "請到手機「設定 → 通知 → ARTHUR」打開通知。");
       const sub = await currentSub().catch(() => null);
-      show(sub ? "已開啟" : "未開啟", sub ? `每天 ${CFG.routines.map((r) => `${r.time} ${r.label}`).join("、")} 會推播提醒。` : "", !!sub);
+      show(sub ? "已開啟" : "未開啟", sub ? `每天 ${CFG.routines.map((r) => `${r.time} ${r.label}${r.at && r.at !== r.time ? `（${r.at}）` : ""}`).join("、")} 會推播提醒。` : "", !!sub);
     }
     $("pushOn").addEventListener("click", async () => {
       if (!user) return;
