@@ -6,6 +6,7 @@
 //    /saga  開表單 → 東石影音開拍新劇（eastone.saga 開「新劇」Issue）
 //    /ec    開表單 → 東石電商加入 queue.yaml，機器人接著發文到 Threads
 //    /dpf   開表單 → 東石數位收件匣，電腦上的 DPF 領取後產生企劃
+//    /saga-ref 丟一段標竿短劇片段 → eastone.saga 開「標竿」Issue，自動分析（規格見 eastone.saga 的 ARTHUR-DISCORD.md）
 //    /channel 把目前頻道設為某個專案的通知頻道
 //    /status  專案狀態
 //    /allow、/deny  讓伺服器裡的某個人可以（或不再可以）使用這些指令
@@ -62,6 +63,12 @@ const COMMANDS = [
   { name: "saga", description: "東石影音：開拍一部新短劇" },
   { name: "ec", description: "東石電商：加入商品並發文到 Threads" },
   { name: "dpf", description: "東石數位：產生一個數位商品企劃" },
+  { name: "saga-ref", description: "東石影音：丟一段標竿短劇片段，自動分析",
+    options: [
+      { type: 11, name: "video", name_localizations: { "zh-TW": "影片" }, description: "短劇片段（30～60 秒、10MB 以內最好）", required: true },
+      { type: 3, name: "likes", name_localizations: { "zh-TW": "喜歡哪裡" }, description: "例如：男主吼的那句、運鏡", required: true, max_length: 500 },
+      { type: 3, name: "source", name_localizations: { "zh-TW": "出處" }, description: "例如：紅果《某某》", required: false, max_length: 200 },
+    ] },
   { name: "status", description: "查看所有專案狀態" },
   { name: "allow", description: "讓這個人也可以使用 A.R.T.H.U.R. 的所有指令",
     options: [{ type: 6, name: "user", description: "要加入的人", required: true }] },
@@ -108,6 +115,8 @@ const b64encode = (s: string) => { const b = new TextEncoder().encode(s); let bi
 const b64decode = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, "")), (c) => c.charCodeAt(0)));
 const yq = (v: string) => JSON.stringify(v);
 type Result = { ok: boolean; title: string; text: string; url?: string };
+// 舊名 saga.ai 已改為 eastone.saga；固定用新名稱（POST 遇到改名轉址會失敗）
+const SAGA_REPO = "eastonesd/eastone.saga";
 
 async function sagaCreate(d: Record<string, string>): Promise<Result> {
   const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
@@ -115,8 +124,7 @@ async function sagaCreate(d: Record<string, string>): Promise<Result> {
   const idea = (d.idea ?? "").trim();
   if (idea.length < 4) return { ok: false, title: "無法開拍", text: "靈感至少要 4 個字。" };
   const eps = Math.min(Math.max(Math.round(num(d.eps) ?? 60), 1), 120), secs = Math.min(Math.max(Math.round(num(d.secs) ?? 90), 15), 180);
-  const repo = Deno.env.get("ARTHUR_SAGA_REPO") || "eastonesd/eastone.saga";
-  const res = await fetch(`https://api.github.com/repos/${repo}/issues`, { method: "POST", headers: ghHeaders(token), body: JSON.stringify({
+  const res = await fetch(`https://api.github.com/repos/${SAGA_REPO}/issues`, { method: "POST", headers: ghHeaders(token), body: JSON.stringify({
     title: "新劇：" + idea.slice(0, 24), labels: ["新劇"],
     body: `### 靈感\n\n${idea}\n\n### 類型\n\n_No response_\n\n### 畫風\n\n_No response_\n\n### 集數\n\n${eps}\n\n### 每集長度（秒）\n\n${secs}\n\n> 由 A.R.T.H.U.R. 從 Discord 送出`,
   }) });
@@ -124,6 +132,24 @@ async function sagaCreate(d: Record<string, string>): Promise<Result> {
   const j = await res.json();
   return { ok: true, title: `第 ${j.number} 號劇開始企劃`, url: `https://eastonesd.github.io/eastone.saga/#/s/${j.number}`,
     text: `「${idea.slice(0, 200)}」\n${eps} 集・每集 ${secs} 秒。幾分鐘後會寫好角色表與分集大綱。` };
+}
+
+async function sagaRef(opts: Record<string, string>, attachment: any, who: string): Promise<Result> {
+  const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
+  if (!token) return { ok: false, title: "無法送出", text: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN）。" };
+  const likes = (opts.likes ?? "").trim(), source = (opts.source ?? "").trim();
+  const url = String(attachment?.url ?? "");
+  if (!/^https:\/\//.test(url)) return { ok: false, title: "無法送出", text: "沒有收到影片附件。" };
+  if (attachment?.content_type && !String(attachment.content_type).startsWith("video/"))
+    return { ok: false, title: "無法送出", text: `這不是影片檔（${attachment.content_type}）。` };
+  const res = await fetch(`https://api.github.com/repos/${SAGA_REPO}/issues`, { method: "POST", headers: ghHeaders(token), body: JSON.stringify({
+    title: "標竿：" + likes.slice(0, 24), labels: ["標竿"],
+    body: `### 影片\n\n${url}\n\n### 喜歡哪裡\n\n${likes}\n\n### 出處\n\n${source || "_No response_"}\n\n由 A.R.T.H.U.R. 從 Discord 送出（${who}）`,
+  }) });
+  if (!res.ok) return { ok: false, title: "無法送出", text: `GitHub 回應 ${res.status}，請確認金鑰對 eastone.saga 有 Issues 寫入權限。` };
+  const j = await res.json();
+  return { ok: true, title: `標竿 #${j.number} 已送出分析`, url: j.html_url,
+    text: `「${likes.slice(0, 200)}」${source ? `\n出處：${source}` : ""}\n幾分鐘後分析完成，結果會貼在這個頻道。` };
 }
 
 async function ecEnqueue(d: Record<string, string>): Promise<Result> {
@@ -208,6 +234,19 @@ async function setup(db: SupabaseClient) {
 }
 
 // ---------- 互動 ----------
+// 先回「處理中」，做完再更新同一則訊息（Discord 只給 3 秒）
+function deferred(body: any, kind: string, run: () => Promise<Result>) {
+  const work = (async () => {
+    let r: Result;
+    try { r = await run(); } catch (e) { r = { ok: false, title: "出了點狀況", text: String(e).slice(0, 300) }; }
+    await fetch(`${API}/webhooks/${APP()}/${body.token}/messages/@original`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [{ title: r.title, description: r.text, url: r.url, color: r.ok ? GOLD : RED,
+        author: { name: KIND_NAME[kind], icon_url: AVATAR[kind] }, footer: { text: "A.R.T.H.U.R." } }] }) });
+  })();
+  // @ts-ignore EdgeRuntime 在 Supabase 執行環境中存在
+  (globalThis as any).EdgeRuntime?.waitUntil?.(work);
+  return json({ type: 5 });
+}
 const reply = (content: string, ephemeral = true) => json({ type: 4, data: { content, flags: ephemeral ? 64 : 0 } });
 
 async function interaction(db: SupabaseClient, body: any) {
@@ -227,6 +266,13 @@ async function interaction(db: SupabaseClient, body: any) {
   if (body.type === 2) {
     const name = body.data?.name;
     if (name in FORMS) return json(modal(name));
+    if (name === "saga-ref") {
+      const opts: Record<string, string> = Object.fromEntries((body.data.options ?? []).map((o: any) => [o.name, String(o.value ?? "")]));
+      const att = body.data.resolved?.attachments?.[opts.video];
+      const u = body.member?.user ?? body.user ?? {};
+      const who = u.global_name || u.username || "Discord";
+      return deferred(body, "saga", () => sagaRef(opts, att, who));
+    }
     if (name === "allow" || name === "deny") {
       const target = String(body.data.options?.[0]?.value ?? "");
       if (!target) return reply("請選擇一個人。");
@@ -258,19 +304,7 @@ async function interaction(db: SupabaseClient, body: any) {
     if (!(kind in FORMS)) return reply("表單已過期。");
     const d: Record<string, string> = {};
     for (const row of body.data.components ?? []) for (const c of row.components ?? []) d[c.custom_id] = String(c.value ?? "");
-    // 先回「處理中」，做完再更新同一則訊息（Discord 只給 3 秒）
-    const work = (async () => {
-      let r: Result;
-      try {
-        r = kind === "saga" ? await sagaCreate(d) : kind === "ec" ? await ecEnqueue(d) : await dpfEnqueue(db, link.owner, d);
-      } catch (e) { r = { ok: false, title: "出了點狀況", text: String(e).slice(0, 300) }; }
-      await fetch(`${API}/webhooks/${APP()}/${body.token}/messages/@original`, { method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ embeds: [{ title: r.title, description: r.text, url: r.url, color: r.ok ? GOLD : RED,
-          author: { name: KIND_NAME[kind], icon_url: AVATAR[kind] }, footer: { text: "A.R.T.H.U.R." } }] }) });
-    })();
-    // @ts-ignore EdgeRuntime 在 Supabase 執行環境中存在
-    (globalThis as any).EdgeRuntime?.waitUntil?.(work);
-    return json({ type: 5 });
+    return deferred(body, kind, () => kind === "saga" ? sagaCreate(d) : kind === "ec" ? ecEnqueue(d) : dpfEnqueue(db, link.owner, d));
   }
   return json({ type: 1 });
 }

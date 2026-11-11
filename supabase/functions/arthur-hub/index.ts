@@ -25,6 +25,7 @@ type RepoStatus = {
   workflows?: { name: string; status: string; conclusion: string | null; at: string; url: string; id: number }[];
   failed?: { name: string; at: string; url: string; id: number }[];
   headline?: string; metrics?: Metric[]; checked_at: string;
+  refs?: { n: number; title: string; url: string }[]; // 東石影音：已分析的標竿 Issue（偵測新完成的分析用，不顯示）
 };
 
 const GH_TOKEN = () => Deno.env.get("ARTHUR_GITHUB_TOKEN") ?? "";
@@ -54,11 +55,14 @@ const money = (n: number) => `NT$${Math.round(n).toLocaleString("en-US")}`;
 const DAY = 86400000;
 
 // ---------- 各專案成果 ----------
-async function sagaMetrics(owner: string, repo: string): Promise<{ headline: string; metrics: Metric[] }> {
-  const [issues, releases] = await Promise.all([
+async function sagaMetrics(owner: string, repo: string): Promise<{ headline: string; metrics: Metric[]; refs: { n: number; title: string; url: string }[] }> {
+  const [issues, releases, analyzed] = await Promise.all([
     gh(`/repos/${owner}/${repo}/issues?labels=%E6%96%B0%E5%8A%87&state=all&per_page=100`) as Promise<any[]>,
     gh(`/repos/${owner}/${repo}/releases?per_page=100`) as Promise<any[]>,
+    // label「已分析」：標竿片分析完成
+    (gh(`/repos/${owner}/${repo}/issues?labels=${encodeURIComponent("已分析")}&state=all&per_page=50&sort=updated`) as Promise<any[]>).catch(() => []),
   ]);
+  const refs = analyzed.filter((i) => !i.pull_request).map((i) => ({ n: i.number, title: String(i.title), url: i.html_url }));
   const series = issues.filter((i) => !i.pull_request);
   const eps = releases.flatMap((r) => (r.assets ?? []).filter((a: any) => /-ep\d+\.mp4$/.test(a.name)));
   const week = eps.filter((a: any) => Date.now() - Date.parse(a.created_at) < 7 * DAY).length;
@@ -70,6 +74,7 @@ async function sagaMetrics(owner: string, repo: string): Promise<{ headline: str
       { label: "已完成集數", value: String(eps.length) },
       { label: "7 天產出", value: `${week} 集` },
     ],
+    refs,
   };
 }
 
@@ -138,7 +143,7 @@ async function checkRepo(owner: string, p: Project): Promise<RepoStatus> {
     const m = p.kind === "saga" ? await sagaMetrics(owner, p.repo)
       : p.kind === "ec" ? await ecMetrics(owner, p.repo)
       : await genericMetrics(owner, p.repo);
-    if (m) { out.headline = m.headline; out.metrics = m.metrics; }
+    if (m) { out.headline = m.headline; out.metrics = m.metrics; if ("refs" in m) out.refs = (m as any).refs; }
   } catch (e) { out.headline = `成果讀取失敗：${(e as Error).message}`.slice(0, 80); }
 
   const running = (out.workflows ?? []).some((w) => w.status !== "completed");
@@ -190,6 +195,12 @@ async function projectEvents(ghOwner: string, prev: Record<string, any>, results
     if (r.kind === "saga") {
       const e0 = metricNum(p, "已完成集數"), e1 = metricNum(r, "已完成集數"), s0 = metricNum(p, "劇數"), s1 = metricNum(r, "劇數");
       if (s0 !== null && s1 !== null && s1 > s0) out.push({ kind: "saga", e: { title: `新劇開拍（共 ${s1} 部）`, text: "編劇部正在寫角色表與分集大綱。", url: "https://eastonesd.github.io/eastone.saga/" } });
+      // 標竿片分析完成：上一次掃描沒有、這次出現在「已分析」裡的 Issue（第一次掃描不通知）
+      if (Array.isArray(p.refs)) {
+        const seen = new Set(p.refs.map((x: any) => x.n));
+        for (const x of (r.refs ?? []).filter((x) => !seen.has(x.n)).slice(0, 5))
+          out.push({ kind: "saga", e: { title: `🎯 標竿分析完成：${x.title}`, url: x.url, text: x.url } });
+      }
       if (e0 !== null && e1 !== null && e1 > e0) out.push({ kind: "saga", e: { title: `新完成 ${e1 - e0} 集`, text: `累計已完成 ${e1} 集。`, url: "https://eastonesd.github.io/eastone.saga/" } });
     }
     if (r.kind === "ec") {
