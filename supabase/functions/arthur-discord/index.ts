@@ -12,14 +12,15 @@
 //    {task:"setup"}  註冊指令到伺服器、依頻道名稱自動對應通知頻道
 //    {task:"test"}   每個通知頻道各發一則測試訊息
 //
-// Secrets：DISCORD_PUBLIC_KEY、DISCORD_APP_ID、DISCORD_BOT_TOKEN、ARTHUR_GITHUB_TOKEN
+// Secrets：DISCORD_BOT_TOKEN、ARTHUR_GITHUB_TOKEN（DISCORD_PUBLIC_KEY、DISCORD_APP_ID 有預設值，可覆寫）
 // verify_jwt 關閉：改用 Discord 簽章與 cron token 驗證。
 // 只有第一位使用指令的人（葉里克先生）可以操作；其他人會被拒絕。
 // ============================================================
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
 
-const PUB = () => Deno.env.get("DISCORD_PUBLIC_KEY") ?? "";
-const APP = () => Deno.env.get("DISCORD_APP_ID") ?? "";
+// 應用程式 ID 與公鑰是公開資訊（不是密碼），直接當預設值；機器人金鑰 DISCORD_BOT_TOKEN 才是秘密
+const PUB = () => Deno.env.get("DISCORD_PUBLIC_KEY") || "f95399e38b012bcaff1f3b49c0c488e856c8cc1e25570812bc261136ab8531ae";
+const APP = () => Deno.env.get("DISCORD_APP_ID") || "1569963735659839549";
 const BOT = () => Deno.env.get("DISCORD_BOT_TOKEN") ?? "";
 const API = "https://discord.com/api/v10";
 const GOLD = 0xf5b43a, RED = 0xff7a7a;
