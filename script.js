@@ -740,7 +740,7 @@
   var projects = (() => {
     let hub = null;
     const HEALTH = { ok: ["正常", "ok"], running: ["執行中", "run"], fail: ["需要處理", "bad"], unknown: ["無法讀取", "unk"] };
-    const AVATAR = { arthur: "assets/projects/arthur.png", "eastone.saga": "assets/projects/saga.png", "eastone.ecommerce": "assets/projects/ec.png", "eastone.trader": "assets/projects/trader.png", "eastone.dpf": "assets/projects/dpf.png" };
+    const AVATAR = { arthur: "assets/projects/arthur.png", "eastone.saga": "assets/projects/saga.png", "eastone.ecommerce": "assets/projects/ec.png", "eastone.trader": "assets/projects/trader.png", "eastone.dpf": "assets/projects/dpf.png", "eastone.com": "assets/projects/com.png", "eastone.stock": "assets/projects/stock.png" };
     const avatar = (x) => AVATAR[x.repo] ? `<img class="pav" src="${AVATAR[x.repo]}" alt="" width="34" height="34" loading="lazy">` : `<span class="pav pav-txt" aria-hidden="true">${esc((x.name || x.repo).trim().charAt(0))}</span>`;
     const ago = (iso) => {
       if (!iso) return "–";
