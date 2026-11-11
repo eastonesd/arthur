@@ -751,6 +751,53 @@
     const list = () => (hub?.projects || []).map((p) => ({ ...p, ...(hub.status?.[p.repo] || { health: "unknown", note: "尚未檢查" }) }));
     // 專案模式的六塊：左邊東石保險／診股／交易，右邊東石影音／電商／數位
     const TILE_NAME = { "eastone.com": "東石保險", "eastone.stock": "東石診股", "eastone.trader": "東石交易", "eastone.saga": "東石影音", "eastone.ecommerce": "東石電商", "eastone.dpf": "東石數位" };
+    // 東石電商：蝦皮分潤每月最後一天 23:50（台北）結案；撥款日見下表，之後預設為次月 25 日
+    const EC_PAYOUT = { "2026-09": "2026-11-10", "2026-10": "2026-12-10", "2026-11": "2026-12-28", "2026-12": "2027-01-25" };
+    const TPE = 8 * 3600000;
+    const ym = (y, m) => `${y}-${String(m + 1).padStart(2, "0")}`;
+    function ecClose(now = Date.now()) {
+      const t = new Date(now + TPE);
+      let y = t.getUTCFullYear(), m = t.getUTCMonth();
+      let at = Date.UTC(y, m + 1, 0, 23, 50) - TPE;          // 當月最後一天 23:50 台北
+      if (now >= at) { m += 1; if (m > 11) { m = 0; y += 1; } at = Date.UTC(y, m + 1, 0, 23, 50) - TPE; }
+      return { month: m + 1, at };
+    }
+    function ecPayout(now = Date.now()) {
+      // 從 2026 年 9 月業績往後找第一個還沒到（含當天）的撥款日
+      let y = 2026, m = 8;
+      for (let i = 0; i < 36; i++) {
+        const key = ym(y, m);
+        const date = EC_PAYOUT[key] || ym(m === 11 ? y + 1 : y, (m + 1) % 12) + "-25";
+        const end = Date.parse(date + "T23:59:59+08:00");
+        if (end >= now) {
+          const days = Math.ceil((Date.parse(date + "T00:00:00+08:00") - now) / 86400000);
+          return { salesMonth: m + 1, date, days: Math.max(days, 0) };
+        }
+        m += 1; if (m > 11) { m = 0; y += 1; }
+      }
+      return null;
+    }
+    const pad2 = (n) => String(n).padStart(2, "0");
+    function countdown(ms) {
+      if (ms <= 0) return "已結案";
+      const s = Math.floor(ms / 1000), d = Math.floor(s / 86400);
+      return `${d} 天 ${pad2(Math.floor(s / 3600) % 24)}:${pad2(Math.floor(s / 60) % 60)}:${pad2(s % 60)}`;
+    }
+    function ecTimerHtml() {
+      const c = ecClose(), p = ecPayout();
+      const pd = p ? `${+p.date.slice(5, 7)}/${+p.date.slice(8, 10)}` : "";
+      return `<div class="pt-close"><span>${c.month} 月業績結案</span><b data-close-at="${c.at}">${countdown(c.at - Date.now())}</b></div>`
+        + (p ? `<div class="pt-close pt-pay"><span>下次撥款・${p.salesMonth} 月業績</span><b>${pd}${p.days ? `（${p.days} 天後）` : "（今天）"}</b></div>` : "");
+    }
+    setInterval(() => {
+      if ($("grid").dataset.mode !== "proj") return;
+      document.querySelectorAll("[data-close-at]").forEach((el) => {
+        const left = +el.dataset.closeAt - Date.now();
+        if (left <= 0) { renderTiles(list()); return; }   // 結案一過就換下個月
+        el.textContent = countdown(left);
+      });
+    }, 1000);
+
     function renderTiles(items) {
       const by = Object.fromEntries(items.map((x) => [x.repo, x]));
       document.querySelectorAll(".ptile").forEach((el) => {
@@ -765,15 +812,18 @@
           x.pushed_at ? { label: "最後更新", value: ago(x.pushed_at) } : null,
           { label: "可見度", value: x.private ? "私人" : "公開" },
         ].filter(Boolean);
-        const mlist = (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, 4);
+        // 東石電商多了結案倒計時，只留兩個最重要的數字
+        const mlist = (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, repo === "eastone.ecommerce" ? 2 : 4);
         const metrics = mlist.map((m) => `<div class="pm"><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
         const fails = (x.failed || []).map((f) => `「${esc(f.name)}」失敗`).join("、");
-        const line = fails || x.headline || (x.kind === "readonly" ? "只讀監看：A.R.T.H.U.R. 不會對這個專案下任何指令" : x.note || "");
+        // 東石電商的標題（近 7 天佣金）跟下面數字重複，省下空間給結案倒計時
+        const line = fails || (repo === "eastone.ecommerce" ? "" : x.headline) || (x.kind === "readonly" ? "只讀監看：A.R.T.H.U.R. 不會對這個專案下任何指令" : x.note || "");
         el.innerHTML = `<header class="pt-head">${avatar({ ...x, name: TILE_NAME[repo] })}
             <div class="pt-name"><h3>${TILE_NAME[repo]}</h3><p>${esc(repo)}${x.pushed_at ? `・更新於 ${ago(x.pushed_at)}` : ""}</p></div>
             <span class="ptag ${cls}">${label}</span></header>
           ${line ? `<p class="pt-head-line${fails ? " bad" : ""}">${esc(line)}</p>` : ""}
           ${metrics ? `<div class="pms">${metrics}</div>` : ""}
+          ${repo === "eastone.ecommerce" ? ecTimerHtml() : ""}
           <p class="pt-foot">${x.site ? `<a href="${esc(x.site.url)}" target="_blank" rel="noopener">開啟網站 ↗</a>${x.site.ok ? "" : `<span class="bad">網站打不開</span>`}` : ""}${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">GitHub ↗</a>` : ""}</p>`;
       });
     }
