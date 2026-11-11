@@ -79,8 +79,8 @@
   const open = (id) => { const d = $(id); if (d.showModal) d.showModal(); else d.setAttribute("open", ""); };
 
   /* ---------- routines ---------- */
-  // at＝事情的時間（顯示），time＝提醒推播的時間；兩者不同時一併標出
-  $("routines").innerHTML = CFG.routines.map((r) => `<span class="routine">${esc(r.label)} <b>${esc(r.at || r.time)}</b>${r.at && r.at !== r.time ? `<small>${esc(r.time)} 提醒</small>` : ""}</span>`).join("");
+  // at＝事情的時間（顯示），time＝提醒推播的時間
+  $("routines").innerHTML = CFG.routines.map((r) => `<span class="routine">${esc(r.label)} <b>${esc(r.at || r.time)}</b></span>`).join("");
 
   /* ---------- dates ---------- */
   function valid(y, mo, d) {
@@ -799,6 +799,41 @@
       });
     }, 1000);
 
+    // ---------- 東石影音：營利進度（eastone.saga 的 stats/monetization.json，由 arthur-hub 每 10 分鐘帶回） ----------
+    const PLAT = { youtube: "YouTube", instagram: "Instagram", threads: "Threads", tiktok: "TikTok" };
+    const big = (n) => { n = Number(n) || 0; return n >= 10000 ? `${+(n / 10000).toFixed(n >= 1e6 ? 0 : 1)} 萬` : n.toLocaleString("zh-TW", { maximumFractionDigits: 1 }); };
+    const pctTxt = (p) => { p = Number(p) || 0; return `${p >= 10 || p === 0 ? Math.floor(p) : p.toFixed(1)}%`; };
+    const nextTier = (pl) => (pl?.tiers ?? []).find((t) => !t.achieved) ?? (pl?.tiers ?? []).slice(-1)[0];
+    function monetStrip(m) {
+      if (!m?.progress) return "";
+      const rows = Object.keys(PLAT).filter((k) => m.progress[k]).map((k) => {
+        const t = nextTier(m.progress[k]), err = m.raw?.[k]?.error;
+        const p = err ? 0 : Math.min(Number(t?.pct) || 0, 100);
+        return `<div class="mn-row${err ? " off" : ""}" title="${esc(t?.name ?? "")}"><span>${PLAT[k]}</span><i><b style="width:${p}%"></b></i><em>${err ? "—" : t?.achieved ? "達成" : pctTxt(p)}</em></div>`;
+      }).join("");
+      return `<div class="mn-strip">${rows}</div>`;
+    }
+    function monetDialog(m) {
+      $("monetMeta").textContent = m?.updated ? `每天更新・上次 ${m.updated.replace("T", " ").slice(0, 16)}` : "尚無資料";
+      $("monetGrid").innerHTML = Object.keys(PLAT).filter((k) => m?.progress?.[k]).map((k) => {
+        const raw = m.raw?.[k] ?? {}, acct = raw.channel || raw.account || "";
+        const tiers = m.progress[k].tiers.map((t) => {
+          const reqs = t.requirements.map((r) => {
+            const eta = r.eta ? `・預計 ${r.eta.slice(5).replace("-", "/")}` : "";
+            const pace = r.per_day ? `・每天 +${big(r.per_day)}` : "";
+            return `<li class="${r.either ? "either" : ""}${r.closest ? " closest" : ""}"><div class="mr-top"><span>${esc(r.label)}${r.either ? `<em>擇一</em>` : ""}</span>
+              <b>${r.current == null ? "—" : big(r.current)} / ${big(r.target)}</b></div><i><b style="width:${Math.min(Number(r.pct) || 0, 100)}%"></b></i>
+              <small>${pctTxt(r.pct)}${pace}${eta}</small></li>`;
+          }).join("");
+          return `<div class="mt${t.achieved ? " done" : ""}"><div class="mt-head"><h5>${esc(t.name)}</h5><span>${t.achieved ? "已達成" : pctTxt(t.pct)}</span></div>
+            <i class="mt-bar"><b style="width:${Math.min(Number(t.pct) || 0, 100)}%"></b></i><ul>${reqs}</ul></div>`;
+        }).join("");
+        return `<section class="mcard${raw.error ? " off" : ""}"><header><h4>${PLAT[k]}</h4>${acct ? `<span>${esc(acct)}</span>` : ""}</header>
+          ${raw.error ? `<p class="m-err">${esc(raw.error)}</p>` : ""}${tiers}</section>`;
+      }).join("") || `<p class="hint">還沒有營利資料。</p>`;
+    }
+    $("monetAll").addEventListener("click", () => { $("dlgMonet").close(); render(); open("dlgProjects"); });
+
     function renderTiles(items) {
       const by = Object.fromEntries(items.map((x) => [x.repo, x]));
       document.querySelectorAll(".ptile").forEach((el) => {
@@ -814,7 +849,7 @@
           { label: "可見度", value: x.private ? "私人" : "公開" },
         ].filter(Boolean);
         // 東石電商多了結案倒計時，只留兩個最重要的數字
-        const mlist = (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, repo === "eastone.ecommerce" ? 2 : 4);
+        const mlist = (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, repo === "eastone.ecommerce" || (repo === "eastone.saga" && x.monet) ? 2 : 4);
         const metrics = mlist.map((m) => `<div class="pm"><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
         const fails = (x.failed || []).map((f) => `「${esc(f.name)}」失敗`).join("、");
         // 東石電商的標題（近 7 天佣金）跟下面數字重複，省下空間給結案倒計時
@@ -825,6 +860,7 @@
           ${line ? `<p class="pt-head-line${fails ? " bad" : ""}">${esc(line)}</p>` : ""}
           ${metrics ? `<div class="pms">${metrics}</div>` : ""}
           ${repo === "eastone.ecommerce" ? ecTimerHtml() : ""}
+          ${repo === "eastone.saga" ? monetStrip(x.monet) : ""}
           <p class="pt-foot">${x.site ? `<a href="${esc(x.site.url)}" target="_blank" rel="noopener">開啟網站 ↗</a>${x.site.ok ? "" : `<span class="bad">網站打不開</span>`}` : ""}${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">GitHub ↗</a>` : ""}</p>`;
       });
     }
@@ -893,6 +929,9 @@
     // 點專案磚（連結以外的地方）打開完整的專案指揮中心
     document.querySelectorAll(".ptile").forEach((el) => el.addEventListener("click", (e) => {
       if (e.target.closest("a")) return;
+      // 東石影音有營利資料時，點磚直接看營利進度
+      const monet = el.dataset.repo === "eastone.saga" ? hub?.status?.["eastone.saga"]?.monet : null;
+      if (monet) { monetDialog(monet); open("dlgMonet"); return; }
       render(); open("dlgProjects");
     }));
     $("projScan").addEventListener("click", async () => {

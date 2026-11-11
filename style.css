@@ -335,4 +335,31 @@ a{color:var(--cyan)}
 .pt-close b{font:600 16px var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap}
 .pt-close.pt-pay{border-color:var(--line);background:transparent;padding:3px 10px}
 .pt-close.pt-pay b{font-size:13.5px;color:var(--fg)}
-.routine small{font-size:12px;color:var(--muted);margin-left:-2px}
+/* 東石影音：營利進度（磚上的小條） */
+.mn-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;flex:none}
+.mn-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
+.mn-row i,.mt-bar,.monet-grid li i{display:block;height:5px;border-radius:3px;background:rgba(94,200,255,.12);overflow:hidden}
+.mn-row i b,.mt-bar b,.monet-grid li i b{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#d99a22,#f8c45a)}
+.mn-row em{font-style:normal;color:var(--gold);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+.mn-row.off{opacity:.45}
+/* 營利進度視窗 */
+.monet-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:10px}
+.mcard{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:rgba(94,200,255,.03);display:flex;flex-direction:column;gap:12px}
+.mcard header{display:flex;align-items:baseline;gap:10px}
+.mcard h4{margin:0;font:600 17px var(--f-body);color:var(--gold);letter-spacing:.04em}
+.mcard header span{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mcard.off{opacity:.6}
+.m-err{margin:0;font-size:12.5px;color:var(--muted)}
+.mt-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.mt h5{margin:0;font-size:14px;font-weight:600}
+.mt-head span{font:600 14px var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums}
+.mt.done .mt-head span{color:var(--ok,#6cc58f)}
+.mt-bar{height:7px!important;margin:6px 0 8px}
+.mt ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.monet-grid li{font-size:12.5px;color:var(--muted);padding:5px 8px;border-radius:8px;border:1px solid transparent}
+.monet-grid li.either{border-style:dashed;border-color:var(--line)}
+.monet-grid li.closest{border:1px solid rgba(245,180,58,.55);background:rgba(245,180,58,.06)}
+.mr-top{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}
+.mr-top b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mr-top em{font-style:normal;font-size:11px;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--cyan)}
+.monet-grid li small{display:block;margin-top:3px;font-size:11.5px}

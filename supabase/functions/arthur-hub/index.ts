@@ -26,6 +26,7 @@ type RepoStatus = {
   failed?: { name: string; at: string; url: string; id: number }[];
   headline?: string; metrics?: Metric[]; checked_at: string;
   refs?: { n: number; title: string; url: string }[]; // 東石影音：已分析的標竿 Issue（偵測新完成的分析用，不顯示）
+  monet?: any; // 東石影音：營利進度（stats/monetization.json 原樣，儀表板顯示＋里程碑通知）
 };
 
 const GH_TOKEN = () => Deno.env.get("ARTHUR_GITHUB_TOKEN") ?? "";
@@ -55,12 +56,14 @@ const money = (n: number) => `NT$${Math.round(n).toLocaleString("en-US")}`;
 const DAY = 86400000;
 
 // ---------- 各專案成果 ----------
-async function sagaMetrics(owner: string, repo: string): Promise<{ headline: string; metrics: Metric[]; refs: { n: number; title: string; url: string }[] }> {
-  const [issues, releases, analyzed] = await Promise.all([
+async function sagaMetrics(owner: string, repo: string): Promise<{ headline: string; metrics: Metric[]; refs: { n: number; title: string; url: string }[]; monet: any }> {
+  const [issues, releases, analyzed, monet] = await Promise.all([
     gh(`/repos/${owner}/${repo}/issues?labels=%E6%96%B0%E5%8A%87&state=all&per_page=100`) as Promise<any[]>,
     gh(`/repos/${owner}/${repo}/releases?per_page=100`) as Promise<any[]>,
     // label「已分析」：標竿片分析完成
     (gh(`/repos/${owner}/${repo}/issues?labels=${encodeURIComponent("已分析")}&state=all&per_page=50&sort=updated`) as Promise<any[]>).catch(() => []),
+    // 營利進度：eastone.saga 每天 06:41（台北）更新
+    ghJSON(owner, repo, "stats/monetization.json").catch(() => null),
   ]);
   const refs = analyzed.filter((i) => !i.pull_request).map((i) => ({ n: i.number, title: String(i.title), url: i.html_url }));
   const series = issues.filter((i) => !i.pull_request);
@@ -75,6 +78,7 @@ async function sagaMetrics(owner: string, repo: string): Promise<{ headline: str
       { label: "7 天產出", value: `${week} 集` },
     ],
     refs,
+    monet,
   };
 }
 
@@ -143,7 +147,7 @@ async function checkRepo(owner: string, p: Project): Promise<RepoStatus> {
     const m = p.kind === "saga" ? await sagaMetrics(owner, p.repo)
       : p.kind === "ec" ? await ecMetrics(owner, p.repo)
       : await genericMetrics(owner, p.repo);
-    if (m) { out.headline = m.headline; out.metrics = m.metrics; if ("refs" in m) out.refs = (m as any).refs; }
+    if (m) { out.headline = m.headline; out.metrics = m.metrics; if ("refs" in m) out.refs = (m as any).refs; if ((m as any).monet) out.monet = (m as any).monet; }
   } catch (e) { out.headline = `成果讀取失敗：${(e as Error).message}`.slice(0, 80); }
 
   const running = (out.workflows ?? []).some((w) => w.status !== "completed");
@@ -200,6 +204,19 @@ async function projectEvents(ghOwner: string, prev: Record<string, any>, results
         const seen = new Set(p.refs.map((x: any) => x.n));
         for (const x of (r.refs ?? []).filter((x) => !seen.has(x.n)).slice(0, 5))
           out.push({ kind: "saga", e: { title: `🎯 標竿分析完成：${x.title}`, url: x.url, text: x.url } });
+      }
+      // 營利里程碑：每個門檻跨過 25／50／75／100% 時通知一次（跟上一次掃描比；資料每天更新一次）
+      const PL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", threads: "Threads", tiktok: "TikTok" };
+      for (const [k, pl] of Object.entries((r.monet?.progress ?? {}) as Record<string, any>)) {
+        if (r.monet?.raw?.[k]?.error) continue;
+        for (const t of pl.tiers ?? []) {
+          const before = (p.monet?.progress?.[k]?.tiers ?? []).find((x: any) => x.name === t.name);
+          if (!before) continue;                       // 第一次看到這個門檻：不通知
+          const b0 = Math.floor(Math.min(before.pct ?? 0, 100) / 25), b1 = Math.floor(Math.min(t.pct ?? 0, 100) / 25);
+          if (b1 > b0) out.push({ kind: "saga", e: t.achieved || b1 === 4
+            ? { title: `🎉 ${PL[k] ?? k}「${t.name}」達成！`, text: "營利門檻全部達標，可以去後台申請了。", color: 0x6cc58f }
+            : { title: `📈 ${PL[k] ?? k}「${t.name}」突破 ${b1 * 25}%`, text: (t.requirements ?? []).map((q: any) => `・${q.label}：${q.current} / ${q.target}${q.eta ? `（預計 ${q.eta}）` : ""}`).join("\n") } });
+        }
       }
       if (e0 !== null && e1 !== null && e1 > e0) out.push({ kind: "saga", e: { title: `新完成 ${e1 - e0} 集`, text: `累計已完成 ${e1} 集。`, url: "https://eastonesd.github.io/eastone.saga/" } });
     }

@@ -7,6 +7,7 @@
 //    /ec    開表單 → 東石電商加入 queue.yaml，機器人接著發文到 Threads
 //    /dpf   開表單 → 東石數位收件匣，電腦上的 DPF 領取後產生企劃
 //    /saga-ref 丟一段標竿短劇片段 → eastone.saga 開「標竿」Issue，自動分析（規格見 eastone.saga 的 ARTHUR-DISCORD.md）
+//    /saga-stats 手動回報 TikTok 粉絲／上月有效觀看 → 寫入 eastone.saga 的 stats/manual.json
 //    /channel 把目前頻道設為某個專案的通知頻道
 //    /status  專案狀態
 //    /allow、/deny  讓伺服器裡的某個人可以（或不再可以）使用這些指令
@@ -68,6 +69,13 @@ const COMMANDS = [
       { type: 11, name: "video", name_localizations: { "zh-TW": "影片" }, description: "短劇片段（30～60 秒、10MB 以內最好）", required: true },
       { type: 3, name: "likes", name_localizations: { "zh-TW": "喜歡哪裡" }, description: "例如：男主吼的那句、運鏡", required: true, max_length: 500 },
       { type: 3, name: "source", name_localizations: { "zh-TW": "出處" }, description: "例如：紅果《某某》", required: false, max_length: 200 },
+    ] },
+  { name: "saga-stats", description: "東石影音：手動回報 TikTok 數字（TikTok 不開放個人帳號數據）",
+    options: [
+      { type: 3, name: "platform", name_localizations: { "zh-TW": "平台" }, description: "平台", required: true, choices: [{ name: "TikTok", value: "tiktok" }] },
+      { type: 3, name: "metric", name_localizations: { "zh-TW": "項目" }, description: "要回報的數字", required: true,
+        choices: [{ name: "粉絲", value: "followers" }, { name: "觀看（上個月有效觀看）", value: "views_last_month" }] },
+      { type: 4, name: "value", name_localizations: { "zh-TW": "數字" }, description: "目前的數字", required: true, min_value: 0 },
     ] },
   { name: "status", description: "查看所有專案狀態" },
   { name: "allow", description: "讓這個人也可以使用 A.R.T.H.U.R. 的所有指令",
@@ -134,7 +142,22 @@ async function sagaCreate(d: Record<string, string>): Promise<Result> {
     text: `「${idea.slice(0, 200)}」\n${eps} 集・每集 ${secs} 秒。幾分鐘後會寫好角色表與分集大綱。` };
 }
 
-async function sagaRef(opts: Record<string, string>, attachment: any, who: string): Promise<Result> {
+// Discord 的附件網址幾小時內就失效：先轉存到 Supabase Storage（私有 bucket saga-refs），Issue 放 90 天的簽名網址
+async function keepVideo(db: SupabaseClient, att: any): Promise<string | null> {
+  try {
+    const r = await fetch(att.url);
+    if (!r.ok) return null;
+    const buf = new Uint8Array(await r.arrayBuffer());
+    const ext = (String(att.filename ?? "").match(/\.(mp4|mov|webm|mkv|3gp)$/i)?.[1] ?? "mp4").toLowerCase();
+    const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
+    const up = await db.storage.from("saga-refs").upload(path, buf, { contentType: att.content_type || "video/mp4", upsert: false });
+    if (up.error) { console.error("storage upload", up.error.message); return null; }
+    const signed = await db.storage.from("saga-refs").createSignedUrl(path, 90 * 86400);
+    return signed.data?.signedUrl ?? null;
+  } catch (e) { console.error("keepVideo", e); return null; }
+}
+
+async function sagaRef(db: SupabaseClient, opts: Record<string, string>, attachment: any, who: string): Promise<Result> {
   const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
   if (!token) return { ok: false, title: "無法送出", text: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN）。" };
   const likes = (opts.likes ?? "").trim(), source = (opts.source ?? "").trim();
@@ -142,14 +165,37 @@ async function sagaRef(opts: Record<string, string>, attachment: any, who: strin
   if (!/^https:\/\//.test(url)) return { ok: false, title: "無法送出", text: "沒有收到影片附件。" };
   if (attachment?.content_type && !String(attachment.content_type).startsWith("video/"))
     return { ok: false, title: "無法送出", text: `這不是影片檔（${attachment.content_type}）。` };
+  const kept = await keepVideo(db, attachment);
   const res = await fetch(`https://api.github.com/repos/${SAGA_REPO}/issues`, { method: "POST", headers: ghHeaders(token), body: JSON.stringify({
     title: "標竿：" + likes.slice(0, 24), labels: ["標竿"],
-    body: `### 影片\n\n${url}\n\n### 喜歡哪裡\n\n${likes}\n\n### 出處\n\n${source || "_No response_"}\n\n由 A.R.T.H.U.R. 從 Discord 送出（${who}）`,
+    body: `### 影片\n\n${kept ?? url}\n\n### 喜歡哪裡\n\n${likes}\n\n### 出處\n\n${source || "_No response_"}\n\n由 A.R.T.H.U.R. 從 Discord 送出（${who}）`,
   }) });
   if (!res.ok) return { ok: false, title: "無法送出", text: `GitHub 回應 ${res.status}，請確認金鑰對 eastone.saga 有 Issues 寫入權限。` };
   const j = await res.json();
   return { ok: true, title: `標竿 #${j.number} 已送出分析`, url: j.html_url,
-    text: `「${likes.slice(0, 200)}」${source ? `\n出處：${source}` : ""}\n幾分鐘後分析完成，結果會貼在這個頻道。` };
+    text: `「${likes.slice(0, 200)}」${source ? `\n出處：${source}` : ""}\n${kept ? "影片已轉存（90 天有效）。" : "⚠️ 影片轉存失敗，用的是 Discord 原始網址（幾小時後失效）。"}\n幾分鐘後分析完成，結果會貼在這個頻道。` };
+}
+
+async function sagaStats(opts: Record<string, string>, who: string): Promise<Result> {
+  const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
+  if (!token) return { ok: false, title: "無法回報", text: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN）。" };
+  const platform = opts.platform, metric = opts.metric, value = Math.max(0, Math.round(Number(opts.value)));
+  if (platform !== "tiktok" || !["followers", "views_last_month"].includes(metric) || !Number.isFinite(value))
+    return { ok: false, title: "無法回報", text: "格式不對。" };
+  const url = `https://api.github.com/repos/${SAGA_REPO}/contents/stats/manual.json`;
+  const cur = await fetch(url, { headers: ghHeaders(token) });
+  let data: Record<string, any> = {}, sha: string | undefined;
+  if (cur.ok) { const j = await cur.json(); sha = j.sha; try { data = JSON.parse(b64decode(j.content)); } catch { data = {}; } }
+  else if (cur.status !== 404) return { ok: false, title: "無法回報", text: `讀取 stats/manual.json 失敗（GitHub ${cur.status}）。` };
+  const before = data[platform]?.[metric];
+  data[platform] = { ...(data[platform] ?? {}), [metric]: value };
+  const label = metric === "followers" ? "粉絲" : "上個月有效觀看";
+  const put = await fetch(url, { method: "PUT", headers: ghHeaders(token), body: JSON.stringify({
+    message: `TikTok ${label} ${value}（${who} 從 Discord 回報）[skip ci]`, content: b64encode(JSON.stringify(data, null, 2) + "\n"), ...(sha ? { sha } : {}),
+    committer: { name: "A.R.T.H.U.R.", email: "arthur@users.noreply.github.com" } }) });
+  if (!put.ok) return { ok: false, title: "無法回報", text: `寫入失敗（GitHub ${put.status}），請確認金鑰對 eastone.saga 有 Contents 寫入權限。` };
+  return { ok: true, title: `TikTok ${label}：${value.toLocaleString("zh-TW")}`,
+    text: `${before !== undefined ? `上次是 ${Number(before).toLocaleString("zh-TW")}。` : ""}明天 06:41 營利進度更新時會算進去。` };
 }
 
 async function ecEnqueue(d: Record<string, string>): Promise<Result> {
@@ -271,7 +317,12 @@ async function interaction(db: SupabaseClient, body: any) {
       const att = body.data.resolved?.attachments?.[opts.video];
       const u = body.member?.user ?? body.user ?? {};
       const who = u.global_name || u.username || "Discord";
-      return deferred(body, "saga", () => sagaRef(opts, att, who));
+      return deferred(body, "saga", () => sagaRef(db, opts, att, who));
+    }
+    if (name === "saga-stats") {
+      const opts: Record<string, string> = Object.fromEntries((body.data.options ?? []).map((o: any) => [o.name, String(o.value ?? "")]));
+      const u = body.member?.user ?? body.user ?? {};
+      return deferred(body, "saga", () => sagaStats(opts, u.global_name || u.username || "Discord"));
     }
     if (name === "allow" || name === "deny") {
       const target = String(body.data.options?.[0]?.value ?? "");
