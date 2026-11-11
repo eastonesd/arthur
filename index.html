@@ -31,15 +31,18 @@
     <span class="date" id="date">----/--/--</span>
     <span class="time" id="time">--:--</span>
     <button class="btn-link" id="installBtn" type="button" hidden>安裝 App</button>
-    <button class="btn-link proj-btn" id="projBtn" type="button" hidden><i class="proj-dot" id="projDot"></i>專案</button>
+    <div class="mode-switch" id="modeSwitch" role="radiogroup" aria-label="畫面切換" hidden>
+      <button type="button" role="radio" id="modeMain" aria-checked="true">主控</button>
+      <button type="button" role="radio" id="modeProj" aria-checked="false"><i class="proj-dot" id="projDot"></i>專案</button>
+    </div>
     <button class="btn-link" id="syncBtn" type="button">登入同步</button>
     <button class="btn-link" id="googleBtn" type="button">連接 Google</button>
   </div>
 </header>
 
-<main class="grid">
+<main class="grid" id="grid" data-mode="main">
   <!-- 今日指揮中心 -->
-  <section class="panel p-agenda" aria-labelledby="h-agenda">
+  <section class="panel p-agenda side-l" aria-labelledby="h-agenda">
     <header class="panel-head">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
       <h2 id="h-agenda">今日指揮中心</h2>
@@ -71,7 +74,7 @@
   </section>
 
   <!-- 通訊中心 -->
-  <section class="panel p-mail" aria-labelledby="h-mail">
+  <section class="panel p-mail side-r" aria-labelledby="h-mail">
     <header class="panel-head">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
       <h2 id="h-mail">通訊中心</h2>
@@ -87,8 +90,16 @@
     </div>
   </section>
 
+  <!-- 專案模式：六個專案（左右各三） -->
+  <section class="ptile side-l" data-slot="l1" data-repo="eastone.com" style="--i:0" aria-label="東石保險"></section>
+  <section class="ptile side-l" data-slot="l2" data-repo="eastone.stock" style="--i:1" aria-label="東石診股"></section>
+  <section class="ptile side-l" data-slot="l3" data-repo="eastone.trader" style="--i:2" aria-label="東石交易"></section>
+  <section class="ptile side-r" data-slot="r1" data-repo="eastone.saga" style="--i:0" aria-label="東石影音"></section>
+  <section class="ptile side-r" data-slot="r2" data-repo="eastone.ecommerce" style="--i:1" aria-label="東石電商"></section>
+  <section class="ptile side-r" data-slot="r3" data-repo="eastone.dpf" style="--i:2" aria-label="東石數位"></section>
+
   <!-- 人脈 / 生日雷達 -->
-  <section class="panel p-clients" aria-labelledby="h-clients">
+  <section class="panel p-clients side-l" aria-labelledby="h-clients">
     <header class="panel-head">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 14.3c2.6.2 4.4 1.9 5 4.7"/></svg>
       <h2 id="h-clients">人脈雷達</h2>
@@ -102,7 +113,7 @@
   </section>
 
   <!-- 金流 / 帳務 -->
-  <section class="panel p-finance" aria-labelledby="h-finance">
+  <section class="panel p-finance side-r" aria-labelledby="h-finance">
     <header class="panel-head">
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
       <h2 id="h-finance">金流 / 帳務</h2>

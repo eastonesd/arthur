@@ -396,6 +396,7 @@
   }
 
   function renderSummary() {
+    if ($("grid").dataset.mode === "proj" && typeof projects !== "undefined" && projects) { $("summary").innerHTML = projects.summaryHtml(); return; }
     $("summary").innerHTML = `今日 <b>${state.agendaCount ?? "–"}</b> 個行程・<b>${state.bdayWeek ?? "–"}</b> 位生日將至・<b>${state.unread ?? "–"}</b> 封未讀郵件`;
   }
 
@@ -748,15 +749,51 @@
       return m < 1 ? "剛剛" : m < 60 ? `${m} 分鐘前` : m < 1440 ? `${Math.round(m / 60)} 小時前` : `${Math.round(m / 1440)} 天前`;
     };
     const list = () => (hub?.projects || []).map((p) => ({ ...p, ...(hub.status?.[p.repo] || { health: "unknown", note: "尚未檢查" }) }));
+    // 專案模式的六塊：左邊東石保險／診股／交易，右邊東石影音／電商／數位
+    const TILE_NAME = { "eastone.com": "東石保險", "eastone.stock": "東石診股", "eastone.trader": "東石交易", "eastone.saga": "東石影音", "eastone.ecommerce": "東石電商", "eastone.dpf": "東石數位" };
+    function renderTiles(items) {
+      const by = Object.fromEntries(items.map((x) => [x.repo, x]));
+      document.querySelectorAll(".ptile").forEach((el) => {
+        const repo = el.dataset.repo, x = by[repo] || { repo, health: "unknown", note: "尚未加入專案清單" };
+        const [label, cls] = HEALTH[x.health] || HEALTH.unknown;
+        el.className = `ptile ${el.classList.contains("side-l") ? "side-l" : "side-r"} ${cls}`;
+        // 沒有成果數字的專案（網站、工具）改顯示健康狀況
+        const wf = x.workflows || [];
+        const fallback = [
+          x.site ? { label: "網站", value: x.site.ok ? "正常運作" : `打不開（${x.site.code || "連不上"}）` } : null,
+          wf.length ? { label: "自動流程", value: `${wf.length} 個・${(x.failed || []).length ? `${x.failed.length} 個失敗` : "全部正常"}` } : null,
+          x.pushed_at ? { label: "最後更新", value: ago(x.pushed_at) } : null,
+          { label: "可見度", value: x.private ? "私人" : "公開" },
+        ].filter(Boolean);
+        const mlist = (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, 4);
+        const metrics = mlist.map((m) => `<div class="pm"><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
+        const fails = (x.failed || []).map((f) => `「${esc(f.name)}」失敗`).join("、");
+        const line = fails || x.headline || (x.kind === "readonly" ? "只讀監看：A.R.T.H.U.R. 不會對這個專案下任何指令" : x.note || "");
+        el.innerHTML = `<header class="pt-head">${avatar({ ...x, name: TILE_NAME[repo] })}
+            <div class="pt-name"><h3>${TILE_NAME[repo]}</h3><p>${esc(repo)}${x.pushed_at ? `・更新於 ${ago(x.pushed_at)}` : ""}</p></div>
+            <span class="ptag ${cls}">${label}</span></header>
+          ${line ? `<p class="pt-head-line${fails ? " bad" : ""}">${esc(line)}</p>` : ""}
+          ${metrics ? `<div class="pms">${metrics}</div>` : ""}
+          <p class="pt-foot">${x.site ? `<a href="${esc(x.site.url)}" target="_blank" rel="noopener">開啟網站 ↗</a>${x.site.ok ? "" : `<span class="bad">網站打不開</span>`}` : ""}${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">GitHub ↗</a>` : ""}</p>`;
+      });
+    }
+    function summaryHtml() {
+      if (!hub) return "專案狀態讀取中…";
+      const repos = Object.keys(TILE_NAME), items = list().filter((x) => repos.includes(x.repo));
+      const n = (h) => items.filter((x) => x.health === h).length;
+      const bad = n("fail");
+      return `專案 <b>${items.length}</b> 個・<b>${n("ok")}</b> 正常・<b>${n("running")}</b> 執行中・${bad ? `<b class="bad">${bad}</b> 需要處理` : "無異常"}・檢查於 ${ago(hub.scanned_at)}`;
+    }
     function render() {
-      const btn = $("projBtn");
-      btn.hidden = !hub;
-      if (!hub) return;
+      const sw = $("modeSwitch");
+      sw.hidden = !hub;
+      if (!hub) { if ($("grid").dataset.mode === "proj") setMode("main", true); return; }
       const items = list();
       const bad = items.filter((x) => x.health === "fail").length;
       $("projDot").className = `proj-dot ${bad ? "bad" : items.some((x) => x.health === "running") ? "run" : "ok"}`;
-      btn.title = bad ? `${bad} 個專案需要處理` : "所有專案正常";
-      btn.setAttribute("aria-label", `專案，${btn.title}`);
+      $("modeProj").title = bad ? `${bad} 個專案需要處理` : "所有專案正常";
+      renderTiles(items);
+      if ($("grid").dataset.mode === "proj") renderSummary();
       $("projMeta").textContent = hub.scanned_at ? `上次檢查：${ago(hub.scanned_at)}・每 30 分鐘自動檢查，失敗時 LINE 通知` : "尚未檢查";
       $("projGrid").innerHTML = items.map((x) => {
         const [label, cls] = HEALTH[x.health] || HEALTH.unknown;
@@ -779,8 +816,34 @@
       if (!sb || !user) { hub = null; render(); return; }
       const { data } = await sb.from("arthur_hub").select("projects, status, scanned_at").eq("owner", user.id).maybeSingle();
       hub = data || null; render();
+      if (hub && store.get(MODE_KEY) === "proj" && $("grid").dataset.mode !== "proj") setMode("proj", true);
     }
-    $("projBtn").addEventListener("click", () => { render(); open("dlgProjects"); });
+    // 主控 ⇄ 專案：舊的四塊往左右撤出，新的六塊依序飛入
+    const MODE_KEY = "arthur.mode";
+    let switching = false;
+    function setMode(mode, instant = false) {
+      const grid = $("grid");
+      if (grid.dataset.mode === mode || switching) return;
+      store.set(MODE_KEY, mode);
+      $("modeMain").setAttribute("aria-checked", String(mode === "main"));
+      $("modeProj").setAttribute("aria-checked", String(mode === "proj"));
+      const still = instant || matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const swap = () => { grid.dataset.mode = mode; renderSummary(); };
+      if (still) return swap();
+      switching = true;
+      grid.classList.add("leaving");
+      setTimeout(() => {
+        grid.classList.remove("leaving"); swap(); grid.classList.add("entering");
+        setTimeout(() => { grid.classList.remove("entering"); switching = false; }, 900);
+      }, 420);
+    }
+    $("modeMain").addEventListener("click", () => setMode("main"));
+    $("modeProj").addEventListener("click", () => { render(); setMode("proj"); });
+    // 點專案磚（連結以外的地方）打開完整的專案指揮中心
+    document.querySelectorAll(".ptile").forEach((el) => el.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return;
+      render(); open("dlgProjects");
+    }));
     $("projScan").addEventListener("click", async () => {
       const sb = cloud?.sb; if (!sb) return;
       $("projScan").disabled = true; $("projMsg").textContent = "檢查中，約需 10 秒…";
@@ -791,7 +854,7 @@
       hub = { ...hub, status: data.status, scanned_at: data.scanned_at }; render();
     });
     setInterval(() => { if (!document.hidden) load(); }, 10 * 60000);
-    return { load };
+    return { load, summaryHtml };
   })();
 
   /* ---------- 安裝成 App ---------- */
