@@ -18,6 +18,8 @@
 //    {task:"setup"}  註冊指令到伺服器、依頻道名稱自動對應通知頻道
 //    {task:"test"}   每個通知頻道各發一則測試訊息
 //    {task:"line-menu-off"}  撤掉 LINE 的 SAGA／EC／DPF 圖文選單（工作改到 Discord）
+//    {task:"daily-video"}    把 eastone.com 財經日報的 15 秒影音版（daily-report 分支的 latest.json → video）傳到 A.R.T.H.U.R. 頻道
+//                            只傳今天的；加 force:true 不檢查日期
 //
 // Secrets：DISCORD_BOT_TOKEN、ARTHUR_GITHUB_TOKEN（DISCORD_PUBLIC_KEY、DISCORD_APP_ID 有預設值，可覆寫）
 // verify_jwt 關閉：改用 Discord 簽章與 cron token 驗證。
@@ -370,6 +372,33 @@ async function send(channelId: string, kind: string, e: { title: string; text?: 
   return { ok: r.ok, status: r.status };
 }
 
+// ---------- 財經日報影音版 ----------
+// 經 GitHub API 讀 daily-report 分支（raw 網址有 5 分鐘快取，剛更新會讀到舊檔）
+const DAILY_API = "https://api.github.com/repos/eastonesd/eastone.com/contents";
+const dailyFile = (path: string) => fetch(`${DAILY_API}/${path}?ref=daily-report`, { headers: { Accept: "application/vnd.github.raw", "User-Agent": "arthur" } });
+async function dailyVideo(db: SupabaseClient, force = false) {
+  const link = await getLink(db);
+  const ch = (link?.channels ?? {}).arthur;
+  if (!ch) return { error: "還沒有指定 A.R.T.H.U.R. 通知頻道" };
+  const m = await dailyFile("latest.json");
+  if (!m.ok) return { error: `讀取 latest.json 失敗（${m.status}）` };
+  const meta = await m.json();
+  if (!meta.video) return { skip: `${meta.date} 沒有影音版` };
+  if (!force && meta.date !== todayTaipei()) return { skip: `最新的是 ${meta.date}，不是今天` };
+  const v = await dailyFile(meta.video);
+  if (!v.ok) return { error: `下載影片失敗（${v.status}）` };
+  const buf = await v.arrayBuffer();
+  const fd = new FormData();
+  fd.append("payload_json", JSON.stringify({
+    embeds: [{ title: `財經日報 ${meta.date.replaceAll("-", ".")}`, description: "15 秒影音版，可直接下載發到限時動態。", color: GOLD,
+      author: { name: KIND_NAME.arthur, icon_url: AVATAR.arthur }, footer: { text: "A.R.T.H.U.R." } }],
+    attachments: [{ id: 0, filename: meta.video }],
+  }));
+  fd.append("files[0]", new Blob([buf], { type: "video/mp4" }), meta.video);
+  const r = await fetch(`${API}/channels/${ch}/messages`, { method: "POST", headers: { Authorization: `Bot ${BOT()}` }, body: fd });
+  return { ok: r.ok, status: r.status, bytes: buf.byteLength, detail: r.ok ? "" : (await r.text()).slice(0, 300) };
+}
+
 // ---------- 設定：註冊指令＋自動對應頻道 ----------
 async function setup(db: SupabaseClient) {
   if (!BOT() || !APP()) return { error: "缺少 DISCORD_BOT_TOKEN 或 DISCORD_APP_ID" };
@@ -502,6 +531,7 @@ Deno.serve(async (req) => {
     if (!allowed) return json({ error: "unauthorized" }, 401);
     const body = await req.json().catch(() => ({}));
     if (body.task === "setup") return json(await setup(db));
+    if (body.task === "daily-video") return json(await dailyVideo(db, body.force === true));
     if (body.task === "test") {
       const link = await getLink(db);
       const out: Record<string, unknown> = {};
