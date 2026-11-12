@@ -91,7 +91,7 @@
       const x = clamp(p.x + 9, 2, width - w - 2), y = clamp(p.y - h - 6, 2, height - h - 2);
       ctx.globalAlpha = p.z < -0.15 ? 0.45 : 1;
       ctx.fillStyle = "rgba(6,14,26,.88)"; ctx.strokeStyle = r.color + "99"; ctx.lineWidth = 0.9;
-      ctx.beginPath(); ctx.roundRect(x, y, w, h, 4); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, 4) : ctx.rect(x, y, w, h); ctx.fill(); ctx.stroke();
       ctx.fillStyle = r.color; ctx.fillText(label, x + 7, y + fs + 3);
     }
     ctx.globalAlpha = 1;
@@ -113,13 +113,17 @@
     if (n) auto = false;
   }
 
+  // 尺寸一律跟著外框（.core）走，不讀 canvas 自己的大小：
+  // 否則樣式還沒載入時，canvas 的像素寬度會回頭撐大自己，越長越大直到瀏覽器畫不出來。
+  const box = canvas.parentElement;
+  Object.assign(canvas.style, { position: "absolute", inset: "0", width: "100%", height: "100%", display: "block" });
   function resize() {
-    width = canvas.clientWidth; height = canvas.clientHeight;
+    width = Math.max(1, Math.min(box.clientWidth, 1600)); height = Math.max(1, Math.min(box.clientHeight, 1600));
     const ratio = Math.min(devicePixelRatio || 1, 2);
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0); dirty = true;
   }
-  new ResizeObserver(resize).observe(canvas);
+  new ResizeObserver(resize).observe(box);
   new IntersectionObserver((es) => { visible = es[0].isIntersecting; }).observe(canvas);
 
   function tick(t) {
