@@ -18,6 +18,8 @@
 <script src="config.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.76.1/dist/umd/supabase.js" defer></script>
 <script src="script.js" defer></script>
+<script src="atlas-data.js" defer></script>
+<script src="atlas.js" defer></script>
 </head>
 <body>
 <canvas id="stars" aria-hidden="true"></canvas>
@@ -67,8 +69,8 @@
       <div class="goal-sub"><span>NT$ <b id="goalNow">0</b> / <span id="goalTarget">–</span></span><span id="goalLeft"></span></div>
     </div>
     <div class="core">
-      <img src="assets/core.jpg" alt="" class="core-img" width="880" height="880">
-      <div class="core-glow" aria-hidden="true"></div>
+      <canvas id="atlas" class="atlas" aria-label="東石知識圖譜：七個專案的程式結構與關聯，可拖曳旋轉、點選節點"></canvas>
+      <div class="atlas-chip" id="atlasChip" hidden></div>
     </div>
     <p class="summary" id="summary">今日 – 個行程・– 位生日將至・– 封未讀郵件</p>
   </section>
