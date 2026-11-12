@@ -1,6 +1,6 @@
 /* A.R.T.H.U.R. 核心：東石知識圖譜（球形視圖）
    資料在 atlas-data.js（window.ATLAS：repos／nodes／edges），由 build_atlas.py 從七個 repo 的原始碼產生。
-   操作：拖曳旋轉、點節點看說明、點兩下回到初始視角。手機上直向滑動仍是捲動頁面。 */
+   操作：拖曳旋轉、點節點看說明、點兩下回到初始視角；放開 2 秒沒再碰就繼續自轉。手機上直向滑動仍是捲動頁面。 */
 (function () {
   "use strict";
   const DATA = window.ATLAS, canvas = document.getElementById("atlas"), chip = document.getElementById("atlasChip");
@@ -31,6 +31,8 @@
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let selected = null, yaw = 0, tilt = -0.06, auto = !reduce, dirty = true, frame = 0;
   let width = 0, height = 0, rad = 0, hits = [], visible = true;
+  let lastTouch = 0;                 // 最後一次觸碰的時間；放開 2 秒沒再碰就恢復自轉
+  const RESUME_MS = 2000;
 
   const wire = [];
   for (let i = 1; i < 14; i++) { const lat = Math.PI * (i / 14 - 0.5); wire.push(Array.from({ length: 61 }, (_, j) => xyz((j * TAU) / 60, lat))); }
@@ -128,6 +130,7 @@
 
   function tick(t) {
     const dt = Math.min(t - frame, 50); frame = t;
+    if (!auto && !reduce && !start && t - lastTouch > RESUME_MS) auto = true;
     if (auto && visible) { yaw += dt * 0.00007; dirty = true; }
     if (dirty && visible) { draw(); dirty = false; }
     requestAnimationFrame(tick);
@@ -136,10 +139,10 @@
   // 拖曳旋轉；點一下選節點；點兩下回到初始視角
   let start = null, last = null, drag = false;
   const pt = (e) => { const b = canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
-  canvas.addEventListener("pointerdown", (e) => { start = last = pt(e); drag = false; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointerdown", (e) => { start = last = pt(e); drag = false; auto = false; lastTouch = e.timeStamp; canvas.setPointerCapture(e.pointerId); });
   canvas.addEventListener("pointermove", (e) => {
     if (!start) return;
-    const p = pt(e);
+    const p = pt(e); lastTouch = e.timeStamp;
     if (!drag && Math.hypot(p.x - start.x, p.y - start.y) > 4) drag = true;
     if (drag) {
       yaw += (p.x - last.x) * 0.007;
@@ -155,9 +158,9 @@
         .filter((v) => v.p.z > -0.2 && v.d < (v.n.type === "repo" ? 16 : 10)).sort((a, b) => a.d - b.d)[0];
       choose(h ? h.n : null);
     }
-    start = null;
+    start = null; lastTouch = e.timeStamp;
   });
-  canvas.addEventListener("pointercancel", () => { start = null; });
+  canvas.addEventListener("pointercancel", (e) => { start = null; lastTouch = e.timeStamp; });
   canvas.addEventListener("dblclick", () => { yaw = 0; tilt = -0.06; auto = !reduce; choose(null); });
 
   resize(); requestAnimationFrame(tick);
