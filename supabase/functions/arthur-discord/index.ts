@@ -8,6 +8,9 @@
 //    /dpf   開表單 → 東石數位收件匣，電腦上的 DPF 領取後產生企劃
 //    /saga-ref 丟一段標竿短劇片段 → eastone.saga 開「標竿」Issue，自動分析（規格見 eastone.saga 的 ARTHUR-DISCORD.md）
 //    /saga-stats 手動回報 TikTok 粉絲／上月有效觀看 → 寫入 eastone.saga 的 stats/manual.json
+//    /todo   開表單 → 新增待辦到 A.R.T.H.U.R.（jarvis_state.todos，儀表板與 LINE 21:00 待辦追蹤都看得到）
+//    /agenda 開表單 → 新增行程到 A.R.T.H.U.R. 行事曆（jarvis_state.agenda，早安簡報與 LINE 行程前一小時提醒都會用到）
+//    /todos  查看未完成待辦與未來 7 天行程，按按鈕即可完成待辦
 //    /channel 把目前頻道設為某個專案的通知頻道
 //    /status  專案狀態
 //    /allow、/deny  讓伺服器裡的某個人可以（或不再可以）使用這些指令
@@ -21,6 +24,7 @@
 // 第一位使用指令的人自動成為主人；主人（或已授權的人）用 /allow 把其他人加進來。
 // ============================================================
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
+import { niceDate, parseDate, parseTime, todayTaipei } from "./when.ts";
 
 // 應用程式 ID 與公鑰是公開資訊（不是密碼），直接當預設值；機器人金鑰 DISCORD_BOT_TOKEN 才是秘密
 const PUB = () => Deno.env.get("DISCORD_PUBLIC_KEY") || "f95399e38b012bcaff1f3b49c0c488e856c8cc1e25570812bc261136ab8531ae";
@@ -77,6 +81,9 @@ const COMMANDS = [
         choices: [{ name: "粉絲", value: "followers" }, { name: "觀看（上個月有效觀看）", value: "views_last_month" }] },
       { type: 4, name: "value", name_localizations: { "zh-TW": "數字" }, description: "目前的數字", required: true, min_value: 0 },
     ] },
+  { name: "todo", description: "A.R.T.H.U.R.：新增待辦" },
+  { name: "agenda", description: "A.R.T.H.U.R.：新增行程到行事曆" },
+  { name: "todos", description: "A.R.T.H.U.R.：查看待辦與近期行程，按一下就完成" },
   { name: "status", description: "查看所有專案狀態" },
   { name: "allow", description: "讓這個人也可以使用 A.R.T.H.U.R. 的所有指令",
     options: [{ type: 6, name: "user", description: "要加入的人", required: true }] },
@@ -106,6 +113,16 @@ const FORMS: Record<string, { title: string; fields: Field[] }> = {
     { id: "type", label: "商品類型", max: 120, placeholder: "例：電子書、模板、課程講義" },
     { id: "price", label: "預期售價（台幣）", max: 10, placeholder: "例：399" },
     { id: "detail", label: "需求說明", long: true, max: 4000, placeholder: "痛點、想解決的問題、參考資料、特別要求" },
+  ] },
+  todo: { title: "A.R.T.H.U.R.：新增待辦", fields: [
+    { id: "title", label: "待辦事項", required: true, max: 200, placeholder: "例：回覆王先生的保單問題" },
+    { id: "due", label: "期限（可留白）", max: 30, placeholder: "例：明天、週五、下週一、11/20" },
+  ] },
+  agenda: { title: "A.R.T.H.U.R.：新增行程", fields: [
+    { id: "title", label: "行程", required: true, max: 200, placeholder: "例：拜訪陳小姐談保單健診" },
+    { id: "date", label: "日期", required: true, max: 30, value: "今天", placeholder: "例：今天、明天、週五、11/20" },
+    { id: "time", label: "時間（留白＝全天）", max: 20, placeholder: "例：14:30、下午3點、晚上7點半" },
+    { id: "where", label: "地點（可留白）", max: 100 },
   ] },
 };
 function modal(kind: string) {
@@ -239,6 +256,104 @@ async function dpfEnqueue(db: SupabaseClient, owner: string, d: Record<string, s
   return { ok: true, title: `已送到 DPF：「${brief.title}」`, text: "電腦上的 DPF 開著時，約 1 分鐘內會建立商品並產生 AI 企劃；完成後會在這裡通知您。" };
 }
 
+// ---------- 待辦與行事曆（寫進儀表板的 jarvis_state） ----------
+// 與儀表板相同的格式：每筆有 id 與更新時間 u；儀表板同步時依 id 合併、取較新的那筆，所以不會互相覆蓋。
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+type Todo = { id: string; title: string; due?: string; done?: boolean; doneAt?: string; u?: number };
+type Agenda = { id: string; date: string; time?: string; title: string; where?: string; u?: number };
+async function loadState(db: SupabaseClient, owner: string): Promise<Record<string, any>> {
+  const { data, error } = await db.from("jarvis_state").select("data").eq("owner", owner).maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.data ?? {}) as Record<string, any>;
+}
+async function saveState(db: SupabaseClient, owner: string, data: Record<string, any>) {
+  const { error } = await db.from("jarvis_state").upsert({ owner, data, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
+const openTodos = (todos: Todo[]) => todos.filter((t) => !t.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+const dueText = (due?: string) => {
+  if (!due) return "";
+  const t = todayTaipei();
+  return due < t ? `⚠️ 已過期 ${niceDate(due)}` : niceDate(due);
+};
+const DATE_HELP = "例：今天、明天、後天、週五、下週一、11/20、3天後";
+
+async function todoAdd(db: SupabaseClient, owner: string, d: Record<string, string>): Promise<Result> {
+  const title = (d.title ?? "").trim();
+  if (!title) return { ok: false, title: "無法新增", text: "待辦事項不能空白。" };
+  const due = parseDate(d.due ?? "");
+  if (due === null) return { ok: false, title: "看不懂期限", text: `「${d.due}」我讀不懂，先生。\n${DATE_HELP}` };
+  const data = await loadState(db, owner);
+  const todos: Todo[] = Array.isArray(data.todos) ? data.todos : [];
+  todos.push({ id: newId(), title, due, done: false, u: Date.now() });
+  await saveState(db, owner, { ...data, todos });
+  const left = openTodos(todos).length;
+  return { ok: true, title: "已加入待辦", text: `「${title}」${due ? `\n期限：${niceDate(due)}` : ""}\n目前共有 ${left} 件未完成。輸入 /todos 可以查看並勾選完成。` };
+}
+
+async function agendaAdd(db: SupabaseClient, owner: string, d: Record<string, string>): Promise<Result> {
+  const title = (d.title ?? "").trim(), where = (d.where ?? "").trim();
+  if (!title) return { ok: false, title: "無法新增", text: "行程不能空白。" };
+  const date = parseDate(d.date?.trim() ? d.date : "今天");
+  if (!date) return { ok: false, title: "看不懂日期", text: `「${d.date}」我讀不懂，先生。\n${DATE_HELP}` };
+  if (date < todayTaipei()) return { ok: false, title: "日期已經過了", text: `${date} 已經過去了，先生。` };
+  const time = parseTime(d.time ?? "");
+  if (time === null) return { ok: false, title: "看不懂時間", text: `「${d.time}」我讀不懂，先生。\n例：14:30、下午3點、晚上7點半；留白代表全天。` };
+  const data = await loadState(db, owner);
+  const agenda: Agenda[] = Array.isArray(data.agenda) ? data.agenda : [];
+  const clash = time ? agenda.find((a) => a.date === date && a.time === time) : undefined;
+  agenda.push({ id: newId(), date, time, title, where, u: Date.now() });
+  await saveState(db, owner, { ...data, agenda });
+  const sameDay = agenda.filter((a) => a.date === date).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  const lines = sameDay.map((a) => `${a.time || "全天"}　${a.title}${a.where ? `（${a.where}）` : ""}`);
+  return { ok: true, title: `已排入行程：${niceDate(date)}`, text: [
+    `**${time || "全天"}　${title}**${where ? `\n地點：${where}` : ""}`,
+    clash ? `\n⚠️ 同一時間已經有「${clash.title}」，先生恐怕得分身了。` : "",
+    time ? "開始前一小時，LINE 會提醒您。" : "",
+    sameDay.length > 1 ? `\n當天行程：\n${lines.join("\n")}` : "",
+  ].filter(Boolean).join("\n") };
+}
+
+// /todos 的畫面：未完成待辦（附完成按鈕）＋ 未來 7 天的行程
+async function todosView(db: SupabaseClient, owner: string, note?: string) {
+  const data = await loadState(db, owner);
+  const todos = openTodos(Array.isArray(data.todos) ? data.todos : []);
+  const t = todayTaipei(), end = new Date(Date.parse(t + "T00:00:00Z") + 7 * 86400_000).toISOString().slice(0, 10);
+  const agenda = ((Array.isArray(data.agenda) ? data.agenda : []) as Agenda[])
+    .filter((a) => a.date >= t && a.date <= end)
+    .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+  const todoLines = todos.slice(0, 20).map((x, i) => `${i + 1}. ${x.title}${x.due ? `　·　${dueText(x.due)}` : ""}`);
+  if (todos.length > 20) todoLines.push(`…另外還有 ${todos.length - 20} 件，請到儀表板查看。`);
+  let lastDay = "";
+  const agendaLines: string[] = [];
+  for (const a of agenda) {
+    if (a.date !== lastDay) { agendaLines.push(`**${niceDate(a.date)}**`); lastDay = a.date; }
+    agendaLines.push(`　${a.time || "全天"}　${a.title}${a.where ? `（${a.where}）` : ""}`);
+  }
+  const description = [
+    note ? `${note}\n` : null,
+    `📝 **待辦（${todos.length} 件）**`, todoLines.join("\n") || "全部完成了，先生。",
+    "", "📅 **未來 7 天行程**", agendaLines.join("\n") || "沒有排行程。",
+    todos.length ? "\n按下面的按鈕即可完成該項待辦。" : null,
+  ].filter((x) => x !== null).join("\n");
+  const buttons = todos.slice(0, 20).map((x, i) => ({ type: 2, style: 2, custom_id: `done:${x.id}`, label: `✓ ${i + 1}. ${x.title}`.slice(0, 80) }));
+  const components = [];
+  for (let i = 0; i < buttons.length; i += 5) components.push({ type: 1, components: buttons.slice(i, i + 5) });
+  return { embeds: [{ title: "待辦與行事曆", description: description.slice(0, 4000), color: GOLD,
+    author: { name: KIND_NAME.arthur, icon_url: AVATAR.arthur }, footer: { text: "A.R.T.H.U.R." } }], components, flags: 64 };
+}
+
+async function todoDone(db: SupabaseClient, owner: string, id: string) {
+  const data = await loadState(db, owner);
+  const todos: Todo[] = Array.isArray(data.todos) ? data.todos : [];
+  const x = todos.find((t) => t.id === id);
+  if (!x) return "找不到這項待辦，可能已經在儀表板刪掉了。";
+  if (x.done) return `「${x.title}」早就完成了。`;
+  x.done = true; x.doneAt = new Date().toISOString(); x.u = Date.now();
+  await saveState(db, owner, { ...data, todos });
+  return `✅ 已完成「${x.title}」。`;
+}
+
 // ---------- 通知 ----------
 async function getLink(db: SupabaseClient) {
   const { data: hub } = await db.from("arthur_hub").select("owner").limit(1).maybeSingle();
@@ -339,6 +454,10 @@ async function interaction(db: SupabaseClient, body: any) {
       await save({ channels });
       return reply(`好的，${KIND_NAME[kind]} 的通知之後都送到這個頻道。`);
     }
+    if (name === "todos") {
+      try { return json({ type: 4, data: await todosView(db, link.owner) }); }
+      catch (e) { return reply(`讀取失敗：${String(e).slice(0, 200)}`); }
+    }
     if (name === "status") {
       const { data: hub } = await db.from("arthur_hub").select("status, scanned_at").eq("owner", link.owner).maybeSingle();
       const items = Object.values((hub?.status ?? {}) as Record<string, any>);
@@ -350,11 +469,25 @@ async function interaction(db: SupabaseClient, body: any) {
     return reply("不認得這個指令。");
   }
 
+  // 按鈕：/todos 畫面上的「✓ 完成」→ 原地更新畫面
+  if (body.type === 3) {
+    const cid = String(body.data?.custom_id ?? "");
+    if (cid.startsWith("done:")) {
+      try {
+        const note = await todoDone(db, link.owner, cid.slice(5));
+        return json({ type: 7, data: await todosView(db, link.owner, note) });
+      } catch (e) { return reply(`更新失敗：${String(e).slice(0, 200)}`); }
+    }
+    return json({ type: 6 });
+  }
+
   if (body.type === 5) {
     const kind = String(body.data?.custom_id ?? "").replace(/^form:/, "");
     if (!(kind in FORMS)) return reply("表單已過期。");
     const d: Record<string, string> = {};
     for (const row of body.data.components ?? []) for (const c of row.components ?? []) d[c.custom_id] = String(c.value ?? "");
+    if (kind === "todo") return deferred(body, "arthur", () => todoAdd(db, link.owner, d));
+    if (kind === "agenda") return deferred(body, "arthur", () => agendaAdd(db, link.owner, d));
     return deferred(body, kind, () => kind === "saga" ? sagaCreate(d) : kind === "ec" ? ecEnqueue(d) : dpfEnqueue(db, link.owner, d));
   }
   return json({ type: 1 });

@@ -50,6 +50,7 @@ LINE 只留**個人用途**（早安簡報、行程、生日、待辦、提醒�
 | 11/10 | 2.9.x 專案指揮中心：專案健康總覽、失敗通知、早安簡報加專案段落、各專案頭像；LINE 開拍 SAGA；LINE 表單（SAGA／EC／DPF，填表→確認→執行，失敗可重試）；arthur-hub 的 DPF 收件匣（claim／done，用裝置金鑰認證） |
 | 11/11 | eastone.com、eastone.stock 換頭像；更名「東石系統」→「東石保險服務平台」；**主控／專案切換**（六個專案磚飛入：左 東石保險、東石診股、東石交易；右 東石影音、東石電商、東石數位）；**Discord 上線**（/saga /ec /dpf 表單、各頻道通知、掃描改每 10 分鐘、/allow /deny 多人使用、撤掉 LINE 選單）；/saga-ref；東石電商磚加業績結案倒計時與撥款日；生活提醒調整 |
 | 11/12 | 東石影音營利進度（磚上四個平台的小進度條，點擊看完整門檻）、arthur-hub 讀 monetization.json 並在跨過 25/50/75/100% 時通知、/saga-ref 影片轉存 Storage、/saga-stats 回報 TikTok、提醒拿掉小字 |
+| 11/12 下午 | **Discord 待辦與行事曆**：`/todo`（新增待辦）、`/agenda`（新增行程）、`/todos`（查看＋按鈕完成）。直接寫入 `jarvis_state` 的 todos／agenda，儀表板、早安簡報、LINE 行程提醒與 21:00 待辦追蹤都吃得到。口語日期時間解析在 `arthur-discord/when.ts` |
 
 ### 2.2 東石影音（eastonesd/eastone.saga）— 本工作階段只做串接
 
@@ -89,6 +90,7 @@ LINE 只留**個人用途**（早安簡報、行程、生日、待辦、提醒�
 
 ### 2.6 東石保險服務平台（eastonesd/eastone.com）／東石診股（eastonesd/eastone.stock）
 
+- 11/12：**財經日報每日截圖改為 IG 限時動態版面**：`market/index.html?story=1` 是 9:16 版面（內容避開 IG 上方 13%、下方 15.5%），`tools/snapshot.mjs` 改拍 1080×1920（LINE 預覽 360×640）。觸發仍是 Supabase `trigger-snapshot`（08:25）＋ GitHub 排程備援。
 - 11/11：
   - 兩邊都換上新版藍金頭像。
   - eastone.com 更名「東石保險服務平台」（主畫面「東石保險」），LINE 圖文選單換圖與標題。
@@ -102,9 +104,10 @@ LINE 只留**個人用途**（早安簡報、行程、生日、待辦、提醒�
 |---|---|---|
 | jarvis-line | v17 | LINE webhook、排程任務、早安簡報、生活提醒、Web Push |
 | arthur-hub | v12 | 掃描各 repo、專案通知、DPF 收件匣 API |
-| arthur-discord | v9 | Discord 指令（Ed25519 驗簽；表單用 modal type 9；先回 type 5 延遲回應，再 PATCH `@original`） |
+| arthur-discord | v11 | Discord 指令（Ed25519 驗簽；表單用 modal type 9；先回 type 5 延遲回應，再 PATCH `@original`） |
 
-部署時要貼**完整檔案內容**。
+部署時要貼**完整檔案內容**。arthur-discord 有兩個檔（index.ts、when.ts），要一起部署。
+另有 `trigger-snapshot`（每天 08:25 觸發 eastone.com 的財經日報截圖）等函式，不在本 repo。
 
 ### pg_cron
 - `jarvis-morning-0800` → `0 1 * * *`（台北 09:00）。名稱沒改，時間已改。
@@ -131,7 +134,8 @@ LINE 只留**個人用途**（早安簡報、行程、生日、待辦、提醒�
 ### Discord
 - 應用程式 ID：1569963735659839549。公鑰寫在程式預設值，也可用環境變數覆蓋。
 - 伺服器「EASTONE SYSTEM」，主人與女朋友（用 /allow 加入）都能使用全部指令。
-- 指令共 9 個：`/saga` `/ec` `/dpf` `/saga-ref` `/saga-stats` `/status` `/allow` `/deny` `/channel`。
+- 指令共 12 個：`/saga` `/ec` `/dpf` `/saga-ref` `/saga-stats` `/todo` `/agenda` `/todos` `/status` `/allow` `/deny` `/channel`。
+- `/todo`、`/agenda` 寫進主人的 `jarvis_state`（女朋友用也一樣寫到主人那份）；時間沒寫上下午的 1～6 點當下午。
 - 管理任務（`?task=`）：`setup`、`test`、`line-menu-off`。
 - 「東石交易」頻道目前**沒有指定 kind**，交易通知走 trader 自己的 Discord webhook。
 
