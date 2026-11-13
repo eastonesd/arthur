@@ -4,7 +4,7 @@
 //
 // 1. Discord Interactions endpoint（帶 X-Signature-Ed25519）：
 //    /saga  開表單 → 東石影音開拍新劇（eastone.saga 開「新劇」Issue）
-//    /ec    開表單 → 東石電商加入 queue.yaml，機器人接著發文到 Threads
+//    /ec    蝦皮連結＋商品頁截圖＋商品圖 → 帶貨片（腳本、影片、貼文）→ 頻道預覽核准 → 排程發到 Threads（見 promo.ts）
 //    /dpf   開表單 → 東石數位收件匣，電腦上的 DPF 領取後產生企劃
 //    /saga-ref 丟一段標竿短劇片段 → eastone.saga 開「標竿」Issue，自動分析（規格見 eastone.saga 的 ARTHUR-DISCORD.md）
 //    /saga-stats 手動回報 TikTok 粉絲／上月有效觀看 → 寫入 eastone.saga 的 stats/manual.json
@@ -29,6 +29,7 @@
 // ============================================================
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
 import { niceDate, parseDate, parseTime, todayTaipei } from "./when.ts";
+import { promoApprove, promoRejectModal, promoRewrite, promoStart, promoTick } from "./promo.ts";
 
 // 應用程式 ID 與公鑰是公開資訊（不是密碼），直接當預設值；機器人金鑰 DISCORD_BOT_TOKEN 才是秘密
 const PUB = () => Deno.env.get("DISCORD_PUBLIC_KEY") || "f95399e38b012bcaff1f3b49c0c488e856c8cc1e25570812bc261136ab8531ae";
@@ -70,7 +71,19 @@ const PROJECT_CHOICES = [
 ];
 const COMMANDS = [
   { name: "saga", description: "東石影音：開拍一部新短劇" },
-  { name: "ec", description: "東石電商：加入商品並發文到 Threads" },
+  { name: "ec", description: "東石電商：做一支帶貨短片並排程發到 Threads",
+    options: [
+      { type: 3, name: "link", name_localizations: { "zh-TW": "分潤連結" }, description: "蝦皮分潤連結（s.shopee.tw 開頭）", required: true, max_length: 300 },
+      { type: 11, name: "page1", name_localizations: { "zh-TW": "商品頁截圖1" }, description: "名稱、價格、評分、已售那一段", required: true },
+      { type: 11, name: "img1", name_localizations: { "zh-TW": "商品圖1" }, description: "商品圖（在蝦皮 App 長按存下來）", required: true },
+      { type: 11, name: "page2", name_localizations: { "zh-TW": "商品頁截圖2" }, description: "商品說明那一段", required: false },
+      { type: 11, name: "page3", name_localizations: { "zh-TW": "商品頁截圖3" }, description: "其他規格", required: false },
+      { type: 11, name: "img2", name_localizations: { "zh-TW": "商品圖2" }, description: "商品圖", required: false },
+      { type: 11, name: "img3", name_localizations: { "zh-TW": "商品圖3" }, description: "商品圖", required: false },
+      { type: 11, name: "img4", name_localizations: { "zh-TW": "商品圖4" }, description: "商品圖", required: false },
+      { type: 11, name: "img5", name_localizations: { "zh-TW": "商品圖5" }, description: "商品圖", required: false },
+      { type: 3, name: "note", name_localizations: { "zh-TW": "補充" }, description: "例：主打午休族、可以寫銷量", required: false, max_length: 500 },
+    ] },
   { name: "dpf", description: "東石數位：產生一個數位商品企劃" },
   { name: "saga-ref", description: "東石影音：丟一段標竿短劇片段，自動分析",
     options: [
@@ -104,13 +117,6 @@ const FORMS: Record<string, { title: string; fields: Field[] }> = {
     { id: "idea", label: "靈感（一句話的故事點子）", long: true, required: true, max: 500, placeholder: "被趕出家門的千金，三年後以神秘投資人身分回歸" },
     { id: "eps", label: "集數", value: "60", max: 3 },
     { id: "secs", label: "每集秒數", value: "90", max: 3 },
-  ] },
-  ec: { title: "東石電商：上架發文", fields: [
-    { id: "name", label: "商品名稱", required: true, max: 200 },
-    { id: "link", label: "分潤連結", required: true, max: 300, placeholder: "s.shopee.tw 開頭的網址" },
-    { id: "cat", label: "分類", max: 40, placeholder: "例：保護貼" },
-    { id: "pricing", label: "價格／佣金比例", max: 40, placeholder: "例：189／10%" },
-    { id: "note", label: "賣點", long: true, max: 300, placeholder: "一句話就好" },
   ] },
   dpf: { title: "東石數位：生成商品", fields: [
     { id: "name", label: "商品名稱", required: true, max: 120 },
@@ -218,35 +224,6 @@ async function sagaStats(opts: Record<string, string>, who: string): Promise<Res
   if (!put.ok) return { ok: false, title: "無法回報", text: `寫入失敗（GitHub ${put.status}），請確認金鑰對 eastone.saga 有 Contents 寫入權限。` };
   return { ok: true, title: `TikTok ${label}：${value.toLocaleString("zh-TW")}`,
     text: `${before !== undefined ? `上次是 ${Number(before).toLocaleString("zh-TW")}。` : ""}明天 06:41 營利進度更新時會算進去。` };
-}
-
-async function ecEnqueue(d: Record<string, string>): Promise<Result> {
-  const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
-  if (!token) return { ok: false, title: "無法加入", text: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN）。" };
-  const name = (d.name ?? "").trim(), link = (d.link ?? "").trim();
-  if (!/^https:\/\/(s\.shopee\.tw|shopee\.tw)\//.test(link)) return { ok: false, title: "無法加入", text: "分潤連結要是蝦皮的網址（https://s.shopee.tw/…）。" };
-  const nums = (d.pricing ?? "").match(/\d+(?:\.\d+)?/g) ?? [];
-  const price = nums[0] ? Number(nums[0]) : null, rateRaw = nums[1] ? Number(nums[1]) : null;
-  const rate = rateRaw ? (rateRaw > 1 ? rateRaw / 100 : rateRaw) : null;
-  const repo = Deno.env.get("ARTHUR_EC_REPO") || "eastonesd/eastone.ecommerce";
-  const url = `https://api.github.com/repos/${repo}/contents/queue.yaml`;
-  const cur = await fetch(url, { headers: ghHeaders(token) });
-  if (!cur.ok) return { ok: false, title: "無法加入", text: `讀取 queue.yaml 失敗（GitHub ${cur.status}）。` };
-  const j = await cur.json();
-  let yaml = b64decode(j.content);
-  const item = [`  - name: ${yq(name)}`, `    link: ${yq(link)}`];
-  if (d.cat?.trim()) item.push(`    keyword: ${yq(d.cat.trim())}`);
-  if (price) item.push(`    price: ${price}`);
-  if (rate) item.push(`    commission_rate: ${rate}`);
-  if (d.note?.trim()) item.push(`    note: ${yq(d.note.trim())}`);
-  if (/^items:\s*\[\s*\]\s*$/m.test(yaml)) yaml = yaml.replace(/^items:\s*\[\s*\]\s*$/m, "items:");
-  if (!/^items:\s*$/m.test(yaml)) yaml = yaml.replace(/\s*$/, "\n\nitems:\n");
-  yaml = yaml.replace(/\s*$/, "\n") + item.join("\n") + "\n";
-  const put = await fetch(url, { method: "PUT", headers: ghHeaders(token), body: JSON.stringify({
-    message: `Discord 加入商品：${name.slice(0, 40)}`, content: b64encode(yaml), sha: j.sha,
-    committer: { name: "A.R.T.H.U.R.", email: "arthur@users.noreply.github.com" } }) });
-  if (!put.ok) return { ok: false, title: "無法加入", text: `寫入 queue.yaml 失敗（GitHub ${put.status}），請確認金鑰有 Contents 寫入權限。` };
-  return { ok: true, title: `已加入「${name}」`, text: "機器人約 1～2 分鐘內會發文到 Threads，發出後會在這裡通知您。" };
 }
 
 async function dpfEnqueue(db: SupabaseClient, owner: string, d: Record<string, string>): Promise<Result> {
@@ -578,6 +555,11 @@ async function interaction(db: SupabaseClient, body: any) {
       const who = u.global_name || u.username || "Discord";
       return deferred(body, "saga", () => sagaRef(db, opts, att, who));
     }
+    if (name === "ec") {
+      const opts: Record<string, string> = Object.fromEntries((body.data.options ?? []).map((o: any) => [o.name, String(o.value ?? "")]));
+      const u = body.member?.user ?? body.user ?? {};
+      return deferred(body, "ec", () => promoStart(db, opts, body.data.resolved?.attachments ?? {}, body.channel_id, u.global_name || u.username || "Discord"));
+    }
     if (name === "saga-stats") {
       const opts: Record<string, string> = Object.fromEntries((body.data.options ?? []).map((o: any) => [o.name, String(o.value ?? "")]));
       const u = body.member?.user ?? body.user ?? {};
@@ -620,6 +602,19 @@ async function interaction(db: SupabaseClient, body: any) {
   // 按鈕：/todos 畫面上的「✓ 完成」→ 原地更新畫面
   if (body.type === 3) {
     const cid = String(body.data?.custom_id ?? "");
+    if (cid.startsWith("promo-no:")) return json(promoRejectModal(cid.slice(9)));
+    if (cid.startsWith("promo-ok:")) {
+      const u = body.member?.user ?? body.user ?? {};
+      const work = (async () => {
+        let text: string;
+        try { text = (await promoApprove(db, cid.slice(9), u.global_name || u.username || "Discord")).text; }
+        catch (e) { text = `核准失敗：${String(e).slice(0, 300)}`; }
+        await fetch(`${API}/webhooks/${APP()}/${body.token}/messages/@original`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text, components: [] }) });
+      })();
+      (globalThis as any).EdgeRuntime?.waitUntil?.(work);
+      return json({ type: 6 });
+    }
     if (cid.startsWith("done:")) {
       try {
         const note = await todoDone(db, link.owner, cid.slice(5));
@@ -630,13 +625,18 @@ async function interaction(db: SupabaseClient, body: any) {
   }
 
   if (body.type === 5) {
-    const kind = String(body.data?.custom_id ?? "").replace(/^form:/, "");
+    const fid = String(body.data?.custom_id ?? "");
+    if (fid.startsWith("promo-fix:")) {
+      const fb = String(body.data.components?.[0]?.components?.[0]?.value ?? "");
+      return deferred(body, "ec", () => promoRewrite(db, fid.slice(10), fb));
+    }
+    const kind = fid.replace(/^form:/, "");
     if (!(kind in FORMS)) return reply("表單已過期。");
     const d: Record<string, string> = {};
     for (const row of body.data.components ?? []) for (const c of row.components ?? []) d[c.custom_id] = String(c.value ?? "");
     if (kind === "todo") return deferred(body, "arthur", () => todoAdd(db, link.owner, d));
     if (kind === "agenda") return deferred(body, "arthur", () => agendaAdd(db, link.owner, d));
-    return deferred(body, kind, () => kind === "saga" ? sagaCreate(d) : kind === "ec" ? ecEnqueue(d) : dpfEnqueue(db, link.owner, d));
+    return deferred(body, kind, () => kind === "saga" ? sagaCreate(d) : dpfEnqueue(db, link.owner, d));
   }
   return json({ type: 1 });
 }
@@ -651,7 +651,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body.task === "setup") return json(await setup(db));
     if (body.task === "ig-story") return json(await igStory(db, { force: body.force === true, last: body.last === true, username: body.username }));
-    if (body.task === "market-deliver") return json(await marketDeliver(db));
+    if (body.task === "market-deliver") return json({ market: await marketDeliver(db), promo: await promoTick(db) });
     if (body.task === "test") {
       const link = await getLink(db);
       const out: Record<string, unknown> = {};
