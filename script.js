@@ -455,8 +455,14 @@
       if (!rows.length) return "";
       const sum = rows.reduce((s, i) => s + toTWD(i.amount, i.cur), 0);
       return `<li><span class="n sum">${label}合計</span><span class="m">NT$ ${money(sum)}</span><span></span></li>` +
-        rows.map((i) => `<li><span class="n">${esc(i.name)}</span><span class="m">${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}</span><button class="del" type="button" data-del-item="${i.id}" aria-label="刪除 ${esc(i.name)}">刪除</button></li>`).join("");
+        rows.map((i) => {
+          const pays = i.pays || [], paid = pays.reduce((s, p) => s + p.amount, 0), last = pays[pays.length - 1];
+          const note = !pays.length ? "" : i.amount <= 0 ? "已還清"
+            : `已還 ${money(paid)}・最近 ${+last.date.slice(5, 7)}/${+last.date.slice(8)}`;
+          return `<li><span class="n">${esc(i.name)}${note ? `<small>${note}</small>` : ""}</span><span class="m">${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}</span><button class="del" type="button" data-del-item="${i.id}" aria-label="刪除 ${esc(i.name)}">刪除</button></li>`;
+        }).join("");
     }).join("") : `<li class="empty-note">例：活存、定存、股票、保單價值是資產；房貸、車貸、信貸是負債。</li>`;
+    syncBalForm();
     const fx = [...L.fixed].sort((a, b) => a.day - b.day);
     $("fixList").innerHTML = fx.length ? fx.map((f) =>
       `<li><span class="n">每月 ${f.day} 號・${esc(f.name)}<small>${f.dir === "out" ? "支出" : "收入"}</small></span><span class="m ${f.dir}">${f.dir === "out" ? "−" : "+"}${money(f.amount)}</span><button class="del" type="button" data-del-fixed="${f.id}" aria-label="刪除 ${esc(f.name)}">刪除</button></li>`
@@ -514,9 +520,39 @@
   let goalMonth = monthKey();
   setInterval(() => { if (monthKey() !== goalMonth) { goalMonth = monthKey(); $("iDate").value = todayIso(); renderGoal(); } }, 60000);
   $("openMoney").addEventListener("click", () => { renderMoneyDialog(); open("dlgMoney"); });
+  // 還款：下拉選「還款」後，項目欄換成現有負債清單；金額從該筆負債扣除，並留下日期紀錄（pays）
+  function syncBalForm() {
+    const pay = $("bKind").value === "pay";
+    const debts = ((state.ledger && state.ledger.items) || []).filter((i) => i.kind === "debt" && i.amount > 0);
+    const keep = $("bDebt").value;
+    $("bDebt").innerHTML = debts.length
+      ? debts.map((i) => `<option value="${i.id}">${esc(i.name)}（剩 ${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}）</option>`).join("")
+      : `<option value="">目前沒有未還清的負債</option>`;
+    if (debts.some((i) => i.id === keep)) $("bDebt").value = keep;
+    $("bName").hidden = pay; $("bName").required = !pay;
+    $("bDebt").hidden = !pay; $("bCur").hidden = pay;
+    $("bAmt").placeholder = pay ? "這次還款金額" : "金額";
+    $("bBtn").textContent = pay ? "還款" : "新增";
+  }
+  $("bKind").addEventListener("change", syncBalForm);
   $("balForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    const amount = num($("bAmt").value); if (!(amount >= 0)) { $("bAmt").focus(); return; }
+    const amount = num($("bAmt").value);
+    if ($("bKind").value === "pay") {
+      const id = $("bDebt").value;
+      if (!id) return;
+      if (!(amount > 0)) { $("bAmt").focus(); return; }
+      saveLedger((L) => {
+        const d = L.items.find((i) => i.id === id); if (!d) return;
+        const paid = Math.min(amount, d.amount);
+        d.amount = Math.round((d.amount - paid) * 100) / 100;
+        d.pays = [...(d.pays || []), { date: todayIso(), amount: paid }];
+        stamp(d);
+      });
+      $("bAmt").value = ""; $("bAmt").focus();
+      return;
+    }
+    if (!(amount >= 0)) { $("bAmt").focus(); return; }
     saveLedger((L) => L.items.push(stamp({ id: uid(), kind: $("bKind").value, name: $("bName").value.trim(), amount, cur: $("bCur").value })));
     $("bName").value = ""; $("bAmt").value = ""; $("bName").focus();
   });

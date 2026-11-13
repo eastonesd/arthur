@@ -14,12 +14,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=3.3.2">
+<link rel="stylesheet" href="style.css?v=3.3.3">
 <script src="config.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.76.1/dist/umd/supabase.js" defer></script>
-<script src="script.js" defer></script>
-<script src="atlas-data.js?v=3.3.2" defer></script>
-<script src="atlas.js?v=3.3.2" defer></script>
+<script src="script.js?v=3.3.3" defer></script>
+<script src="atlas-data.js?v=3.3.3" defer></script>
+<script src="atlas.js?v=3.3.3" defer></script>
 </head>
 <body>
 <canvas id="stars" aria-hidden="true"></canvas>
@@ -195,11 +195,12 @@
     <section>
       <h4>資產負債</h4>
       <form class="add-row" id="balForm" autocomplete="off">
-        <select id="bKind"><option value="asset">資產</option><option value="debt">負債</option></select>
+        <select id="bKind" aria-label="類別"><option value="asset">資產</option><option value="debt">負債</option><option value="pay">還款</option></select>
         <input id="bName" placeholder="項目，例：活存、房貸" required>
+        <select id="bDebt" aria-label="要還款的負債" hidden></select>
         <input id="bAmt" inputmode="decimal" placeholder="金額" required>
-        <select id="bCur"><option>TWD</option><option>USD</option></select>
-        <button class="btn" type="submit">新增</button>
+        <select id="bCur" aria-label="幣別"><option>TWD</option><option>USD</option></select>
+        <button class="btn" type="submit" id="bBtn">新增</button>
       </form>
       <ul class="edit-list" id="balList"></ul>
     </section>
