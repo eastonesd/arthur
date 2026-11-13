@@ -11,7 +11,7 @@
 //    /todo   開表單 → 新增待辦到 A.R.T.H.U.R.（jarvis_state.todos，儀表板與 LINE 21:00 待辦追蹤都看得到）
 //    /agenda 開表單 → 新增行程到 A.R.T.H.U.R. 行事曆（jarvis_state.agenda，早安簡報與 LINE 行程前一小時提醒都會用到）
 //    /todos  查看未完成待辦與未來 7 天行程，按按鈕即可完成待辦
-//    /market 立刻產生最新財經日報（影片或截圖）：觸發 eastone.com 的截圖流程，完成後由 market-deliver 送到頻道
+//    /market 立刻產生最新財經日報截圖：觸發 eastone.com 的截圖流程，完成後由 market-deliver 送到頻道
 //    /channel 把目前頻道設為某個專案的通知頻道
 //    /status  專案狀態
 //    /allow、/deny  讓伺服器裡的某個人可以（或不再可以）使用這些指令
@@ -19,8 +19,8 @@
 //    {task:"setup"}  註冊指令到伺服器、依頻道名稱自動對應通知頻道
 //    {task:"test"}   每個通知頻道各發一則測試訊息
 //    {task:"line-menu-off"}  撤掉 LINE 的 SAGA／EC／DPF 圖文選單（工作改到 Discord）
-//    {task:"daily-video"}    把 eastone.com 財經日報的 15 秒影音版（daily-report 分支的 latest.json → video）傳到 A.R.T.H.U.R. 頻道
-//                            只傳今天的；加 force:true 不檢查日期
+//    {task:"ig-story"}       週一到週五 09:00（09:30 補發，帶 last:true，仍失敗就通知）把今天的財經日報截圖發到 Instagram 主帳號限時動態
+//                            需要 Secret IG_MAIN_TOKEN；同一天只發一次（arthur_ig_story）；可帶 username 指定帳號、force:true 重發
 //    {task:"market-deliver"} 每分鐘由排程呼叫：/market 的請求在新截圖完成後送出（arthur_market_requests）
 //
 // Secrets：DISCORD_BOT_TOKEN、ARTHUR_GITHUB_TOKEN（DISCORD_PUBLIC_KEY、DISCORD_APP_ID 有預設值，可覆寫）
@@ -88,9 +88,7 @@ const COMMANDS = [
   { name: "todo", description: "A.R.T.H.U.R.：新增待辦" },
   { name: "agenda", description: "A.R.T.H.U.R.：新增行程到行事曆" },
   { name: "todos", description: "A.R.T.H.U.R.：查看待辦與近期行程，按一下就完成" },
-  { name: "market", name_localizations: { "zh-TW": "財經日報" }, description: "A.R.T.H.U.R.：立刻產生最新財經日報",
-    options: [{ type: 3, name: "type", name_localizations: { "zh-TW": "類型" }, description: "要影片還是截圖", required: true,
-      choices: [{ name: "即時影片（15 秒）", value: "video" }, { name: "即時截圖", value: "image" }] }] },
+  { name: "market", name_localizations: { "zh-TW": "財經日報" }, description: "A.R.T.H.U.R.：立刻產生最新財經日報截圖" },
   { name: "status", description: "查看所有專案狀態" },
   { name: "allow", description: "讓這個人也可以使用 A.R.T.H.U.R. 的所有指令",
     options: [{ type: 6, name: "user", description: "要加入的人", required: true }] },
@@ -420,7 +418,7 @@ async function marketRequest(db: SupabaseClient, kind: string, channel: string, 
       return `觸發截圖流程失敗（GitHub ${r.status}）。`;
     }
   }
-  return `收到，先生。正在抓最新行情製作${kind === "video" ? "影片" : "截圖"}，約 1～2 分鐘後送到這裡。`;
+  return "收到，先生。正在抓最新行情製作截圖，約 1～2 分鐘後送到這裡。";
 }
 async function marketDeliver(db: SupabaseClient) {
   const { data: rows } = await db.from("arthur_market_requests").select("*").eq("status", "pending").order("requested_at");
@@ -434,7 +432,7 @@ async function marketDeliver(db: SupabaseClient) {
     const asked = Date.parse(row.requested_at);
     if (updated > asked) {
       if (!meta) { const m = await dailyFile("latest.json"); meta = m.ok ? await m.json() : null; }
-      const r = meta ? await postDaily(row.channel_id, meta, row.kind, row.kind === "video" ? "即時影片：15 秒，可直接下載發到限時動態。" : "即時截圖：1080×1920，可直接下載。")
+      const r = meta ? await postDaily(row.channel_id, meta, row.kind, "即時截圖：1080×1920，可直接下載。")
                      : { ok: false, detail: "讀不到 latest.json" };
       await db.from("arthur_market_requests").update({ status: r.ok ? "done" : "failed", note: r.detail || null, done_at: new Date().toISOString() }).eq("id", row.id);
       if (!r.ok) await send(row.channel_id, "arthur", { title: "財經日報送出失敗", text: r.detail, color: RED });
@@ -448,16 +446,72 @@ async function marketDeliver(db: SupabaseClient) {
   return { delivered: out };
 }
 
-async function dailyVideo(db: SupabaseClient, force = false) {
+// ---------- Instagram 限時動態：每天的財經日報截圖 ----------
+// 權杖放在 Secret IG_MAIN_TOKEN（主人自己在 Supabase 後台填）。支援兩種：
+//   IGAA 開頭（Instagram 登入，graph.instagram.com）；EAA 開頭（Meta 統一登入／粉絲專頁，graph.facebook.com）
+// 錯誤訊息一律不帶權杖內容。
+async function igAccount(tok: string, want?: string) {
+  if (!tok.startsWith("EAA")) {
+    const base = "https://graph.instagram.com/v23.0";
+    const r = await fetch(`${base}/me?fields=user_id,username&access_token=${encodeURIComponent(tok)}`);
+    if (!r.ok) return { error: `權杖無效或過期（HTTP ${r.status}）` };
+    const d = await r.json();
+    return { base, id: String(d.user_id), username: d.username as string };
+  }
+  const base = "https://graph.facebook.com/v23.0";
+  const get = (path: string) => fetch(`${base}/${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(tok)}`);
+  const ids: string[] = [];
+  for (const p of ["me/instagram_accounts?fields=id", "me/assigned_instagram_accounts?fields=id"]) {
+    const r = await get(p); if (r.ok) ids.push(...((await r.json()).data ?? []).map((x: any) => String(x.id)));
+  }
+  const pages = await get("me/accounts?fields=instagram_business_account");
+  if (pages.ok) ids.push(...((await pages.json()).data ?? []).filter((p: any) => p.instagram_business_account).map((p: any) => String(p.instagram_business_account.id)));
+  const found: { id: string; username: string }[] = [];
+  for (const id of [...new Set(ids)]) {
+    const r = await get(`${id}?fields=username`);
+    if (r.ok) { const d = await r.json(); if (d.username) found.push({ id, username: d.username }); }
+  }
+  if (!found.length) return { error: "權杖有效，但找不到可發文的 Instagram 專業帳號" };
+  const pick = want ? found.find((a) => a.username.toLowerCase() === want.toLowerCase()) : found.length === 1 ? found[0] : null;
+  if (!pick) return { error: `這個權杖可以管理 ${found.map((a) => "@" + a.username).join("、")}，請告訴亞瑟要發到哪一個` };
+  return { base, ...pick };
+}
+
+async function igStory(db: SupabaseClient, opts: { force?: boolean; last?: boolean; username?: string }) {
   const link = await getLink(db);
   const ch = (link?.channels ?? {}).arthur;
-  if (!ch) return { error: "還沒有指定 A.R.T.H.U.R. 通知頻道" };
+  const today = todayTaipei();
+  const { data: done } = await db.from("arthur_ig_story").select("media_id").eq("date", today).maybeSingle();
+  if (done && !opts.force) return { skip: "今天已經發過了" };
+  const fail = async (why: string) => {
+    if (ch) await send(ch, "arthur", { title: "Instagram 限時動態沒有發出", text: why, color: RED });
+    return { error: why };
+  };
+  const tok = (Deno.env.get("IG_MAIN_TOKEN") ?? "").trim();
+  if (!tok) return await fail("還沒設定 IG_MAIN_TOKEN（Instagram 主帳號的權杖）。");
   const m = await dailyFile("latest.json");
-  if (!m.ok) return { error: `讀取 latest.json 失敗（${m.status}）` };
+  if (!m.ok) return await fail(`讀不到今天的截圖資訊（HTTP ${m.status}）。`);
   const meta = await m.json();
-  if (!meta.video) return { skip: `${meta.date} 沒有影音版` };
-  if (!force && meta.date !== todayTaipei()) return { skip: `最新的是 ${meta.date}，不是今天` };
-  return await postDaily(ch, meta, "video", "15 秒影音版，可直接下載發到限時動態。");
+  if (meta.date !== today) return opts.force || opts.last ? await fail(`今天的截圖還沒拍好（最新的是 ${meta.date}）。`) : { wait: `最新的是 ${meta.date}，等補發時再試` };
+  const acct: any = await igAccount(tok, opts.username);
+  if (acct.error) return await fail(acct.error);
+  const imageUrl = `https://raw.githubusercontent.com/${SNAP_REPO}/daily-report/${meta.image}`;
+  const q = (o: Record<string, string>) => new URLSearchParams({ ...o, access_token: tok });
+  const c = await fetch(`${acct.base}/${acct.id}/media`, { method: "POST", body: q({ media_type: "STORIES", image_url: imageUrl }) });
+  if (!c.ok) return await fail(`Instagram 建立限時動態失敗（HTTP ${c.status}）：${(await c.text()).slice(0, 200)}`);
+  const cid = (await c.json()).id;
+  for (let i = 0; i < 12; i++) {             // 圖片通常幾秒內就處理好，最多等 1 分鐘
+    const s = await (await fetch(`${acct.base}/${cid}?fields=status_code&access_token=${encodeURIComponent(tok)}`)).json();
+    if (s.status_code === "FINISHED") break;
+    if (s.status_code === "ERROR" || s.status_code === "EXPIRED") return await fail(`Instagram 處理圖片失敗（${s.status_code}）。`);
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  const p = await fetch(`${acct.base}/${acct.id}/media_publish`, { method: "POST", body: q({ creation_id: cid }) });
+  if (!p.ok) return await fail(`Instagram 發布失敗（HTTP ${p.status}）：${(await p.text()).slice(0, 200)}`);
+  const mediaId = (await p.json()).id;
+  await db.from("arthur_ig_story").upsert({ date: today, media_id: mediaId, username: acct.username, posted_at: new Date().toISOString() });
+  if (ch) await postDaily(ch, meta, "image", `已發到 @${acct.username} 的限時動態。`);
+  return { ok: true, username: acct.username, media_id: mediaId };
 }
 
 // ---------- 設定：註冊指令＋自動對應頻道 ----------
@@ -545,9 +599,8 @@ async function interaction(db: SupabaseClient, body: any) {
       return reply(`好的，${KIND_NAME[kind]} 的通知之後都送到這個頻道。`);
     }
     if (name === "market") {
-      const kind = body.data.options?.[0]?.value === "image" ? "image" : "video";
       const u = body.member?.user ?? body.user ?? {};
-      return json({ type: 4, data: { content: await marketRequest(db, kind, body.channel_id, u.global_name || u.username || "Discord") } });
+      return json({ type: 4, data: { content: await marketRequest(db, "image", body.channel_id, u.global_name || u.username || "Discord") } });
     }
     if (name === "todos") {
       try { return json({ type: 4, data: await todosView(db, link.owner) }); }
@@ -597,7 +650,7 @@ Deno.serve(async (req) => {
     if (!allowed) return json({ error: "unauthorized" }, 401);
     const body = await req.json().catch(() => ({}));
     if (body.task === "setup") return json(await setup(db));
-    if (body.task === "daily-video") return json(await dailyVideo(db, body.force === true));
+    if (body.task === "ig-story") return json(await igStory(db, { force: body.force === true, last: body.last === true, username: body.username }));
     if (body.task === "market-deliver") return json(await marketDeliver(db));
     if (body.task === "test") {
       const link = await getLink(db);
