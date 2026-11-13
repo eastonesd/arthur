@@ -1,6 +1,6 @@
 /* A.R.T.H.U.R. service worker：讓安裝後的 App 可離線開啟。
    只快取本站檔案；Google、Supabase、匯率等外部請求一律直接走網路。 */
-const VERSION = "jarvis-3.3.5";
+const VERSION = "jarvis-3.3.6";
 const SHELL = [
   "./", "index.html", "style.css", "script.js", "config.js", "atlas.js", "atlas-data.js", "manifest.webmanifest",
   "assets/core.jpg", "assets/icon-192.png", "assets/icon-512.png", "assets/favicon.png",

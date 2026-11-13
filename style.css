@@ -346,6 +346,16 @@ a{color:var(--cyan)}
 .pt-close b{font:600 16px var(--f-display);color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap}
 .pt-close.pt-pay{border-color:var(--line);background:transparent;padding:3px 10px}
 .pt-close.pt-pay b{font-size:13.5px;color:var(--fg)}
+/* 東石電商：營登門檻 NT$50,000 */
+.ec-goal{flex:none;display:grid;gap:3px;font-size:11.5px;color:var(--muted)}
+.ec-goal .eg-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.ec-goal .eg-top b{font:600 13px var(--f-display);color:var(--fg);font-variant-numeric:tabular-nums}
+.ec-goal i{display:block;height:6px;border-radius:3px;background:rgba(94,200,255,.12);overflow:hidden}
+.ec-goal i b{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#d99a22,#f8c45a)}
+.ec-goal small{font-size:11px}
+.ec-goal.near small{color:var(--gold)}
+.ec-goal.done i b{background:linear-gradient(90deg,#e0503f,#ff7a7a)}
+.ec-goal.done small{color:#ff7a7a;font-weight:600}
 /* 東石影音：營利進度（磚上的小條） */
 .mn-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;flex:none}
 .mn-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
