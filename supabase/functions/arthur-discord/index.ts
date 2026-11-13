@@ -11,6 +11,7 @@
 //    /todo   開表單 → 新增待辦到 A.R.T.H.U.R.（jarvis_state.todos，儀表板與 LINE 21:00 待辦追蹤都看得到）
 //    /agenda 開表單 → 新增行程到 A.R.T.H.U.R. 行事曆（jarvis_state.agenda，早安簡報與 LINE 行程前一小時提醒都會用到）
 //    /todos  查看未完成待辦與未來 7 天行程，按按鈕即可完成待辦
+//    /market 立刻產生最新財經日報（影片或截圖）：觸發 eastone.com 的截圖流程，完成後由 market-deliver 送到頻道
 //    /channel 把目前頻道設為某個專案的通知頻道
 //    /status  專案狀態
 //    /allow、/deny  讓伺服器裡的某個人可以（或不再可以）使用這些指令
@@ -20,6 +21,7 @@
 //    {task:"line-menu-off"}  撤掉 LINE 的 SAGA／EC／DPF 圖文選單（工作改到 Discord）
 //    {task:"daily-video"}    把 eastone.com 財經日報的 15 秒影音版（daily-report 分支的 latest.json → video）傳到 A.R.T.H.U.R. 頻道
 //                            只傳今天的；加 force:true 不檢查日期
+//    {task:"market-deliver"} 每分鐘由排程呼叫：/market 的請求在新截圖完成後送出（arthur_market_requests）
 //
 // Secrets：DISCORD_BOT_TOKEN、ARTHUR_GITHUB_TOKEN（DISCORD_PUBLIC_KEY、DISCORD_APP_ID 有預設值，可覆寫）
 // verify_jwt 關閉：改用 Discord 簽章與 cron token 驗證。
@@ -86,6 +88,9 @@ const COMMANDS = [
   { name: "todo", description: "A.R.T.H.U.R.：新增待辦" },
   { name: "agenda", description: "A.R.T.H.U.R.：新增行程到行事曆" },
   { name: "todos", description: "A.R.T.H.U.R.：查看待辦與近期行程，按一下就完成" },
+  { name: "market", name_localizations: { "zh-TW": "財經日報" }, description: "A.R.T.H.U.R.：立刻產生最新財經日報",
+    options: [{ type: 3, name: "type", name_localizations: { "zh-TW": "類型" }, description: "要影片還是截圖", required: true,
+      choices: [{ name: "即時影片（15 秒）", value: "video" }, { name: "即時截圖", value: "image" }] }] },
   { name: "status", description: "查看所有專案狀態" },
   { name: "allow", description: "讓這個人也可以使用 A.R.T.H.U.R. 的所有指令",
     options: [{ type: 6, name: "user", description: "要加入的人", required: true }] },
@@ -376,6 +381,73 @@ async function send(channelId: string, kind: string, e: { title: string; text?: 
 // 經 GitHub API 讀 daily-report 分支（raw 網址有 5 分鐘快取，剛更新會讀到舊檔）
 const DAILY_API = "https://api.github.com/repos/eastonesd/eastone.com/contents";
 const dailyFile = (path: string) => fetch(`${DAILY_API}/${path}?ref=daily-report`, { headers: { Accept: "application/vnd.github.raw", "User-Agent": "arthur" } });
+// 把 daily-report 上的日報檔案（影片或截圖）傳到頻道
+async function postDaily(ch: string, meta: any, kind: "video" | "image", note: string) {
+  const file = kind === "video" ? meta.video : meta.image;
+  if (!file) return { ok: false, detail: kind === "video" ? "這次沒有產生影片" : "這次沒有產生截圖" };
+  const v = await dailyFile(file);
+  if (!v.ok) return { ok: false, detail: `下載失敗（${v.status}）` };
+  const buf = await v.arrayBuffer();
+  const fd = new FormData();
+  fd.append("payload_json", JSON.stringify({
+    embeds: [{ title: `財經日報 ${meta.date.replaceAll("-", ".")}`, description: note, color: GOLD,
+      author: { name: KIND_NAME.arthur, icon_url: AVATAR.arthur }, footer: { text: "A.R.T.H.U.R." } }],
+    attachments: [{ id: 0, filename: file }],
+  }));
+  fd.append("files[0]", new Blob([buf], { type: kind === "video" ? "video/mp4" : "image/jpeg" }), file);
+  const r = await fetch(`${API}/channels/${ch}/messages`, { method: "POST", headers: { Authorization: `Bot ${BOT()}` }, body: fd });
+  return { ok: r.ok, status: r.status, bytes: buf.byteLength, detail: r.ok ? "" : (await r.text()).slice(0, 300) };
+}
+
+// ---------- /market：即時財經日報 ----------
+// 指令先記一筆請求並觸發 GitHub 截圖流程；排程每分鐘呼叫 market-deliver，
+// 等 daily-report 分支出現比請求更新的版本，就把影片或截圖送到發指令的頻道。
+const SNAP_REPO = "eastonesd/eastone.com";
+const ghToken = () => Deno.env.get("GITHUB_TOKEN") ?? "";
+async function marketRequest(db: SupabaseClient, kind: string, channel: string, who: string) {
+  const token = ghToken();
+  if (!token) return "還沒設定 GITHUB_TOKEN，無法觸發截圖流程。";
+  const { data: pending } = await db.from("arthur_market_requests").select("id").eq("status", "pending")
+    .gte("requested_at", new Date(Date.now() - 8 * 60_000).toISOString()).limit(1);
+  const { error } = await db.from("arthur_market_requests").insert({ kind, channel_id: channel, who });
+  if (error) return `記錄請求失敗：${error.message}`;
+  // 已經有一個正在跑，就不重複觸發，跑完一起送
+  if (!pending?.length) {
+    const r = await fetch(`https://api.github.com/repos/${SNAP_REPO}/actions/workflows/daily-snapshot.yml/dispatches`, {
+      method: "POST", headers: { ...ghHeaders(token) }, body: JSON.stringify({ ref: "main" }) });
+    if (r.status !== 204) {
+      await db.from("arthur_market_requests").update({ status: "failed", note: `dispatch ${r.status}` }).eq("status", "pending").eq("channel_id", channel);
+      return `觸發截圖流程失敗（GitHub ${r.status}）。`;
+    }
+  }
+  return `收到，先生。正在抓最新行情製作${kind === "video" ? "影片" : "截圖"}，約 1～2 分鐘後送到這裡。`;
+}
+async function marketDeliver(db: SupabaseClient) {
+  const { data: rows } = await db.from("arthur_market_requests").select("*").eq("status", "pending").order("requested_at");
+  if (!rows?.length) return { idle: true };
+  const c = await fetch(`https://api.github.com/repos/${SNAP_REPO}/commits/daily-report`, { headers: ghHeaders(ghToken()) });
+  if (!c.ok) return { error: `讀取 daily-report 失敗（${c.status}）` };
+  const updated = Date.parse((await c.json()).commit?.committer?.date ?? "");
+  let meta: any = null;
+  const out = [];
+  for (const row of rows) {
+    const asked = Date.parse(row.requested_at);
+    if (updated > asked) {
+      if (!meta) { const m = await dailyFile("latest.json"); meta = m.ok ? await m.json() : null; }
+      const r = meta ? await postDaily(row.channel_id, meta, row.kind, row.kind === "video" ? "即時影片：15 秒，可直接下載發到限時動態。" : "即時截圖：1080×1920，可直接下載。")
+                     : { ok: false, detail: "讀不到 latest.json" };
+      await db.from("arthur_market_requests").update({ status: r.ok ? "done" : "failed", note: r.detail || null, done_at: new Date().toISOString() }).eq("id", row.id);
+      if (!r.ok) await send(row.channel_id, "arthur", { title: "財經日報送出失敗", text: r.detail, color: RED });
+      out.push({ id: row.id, ok: r.ok });
+    } else if (Date.now() - asked > 10 * 60_000) {
+      await db.from("arthur_market_requests").update({ status: "failed", note: "逾時", done_at: new Date().toISOString() }).eq("id", row.id);
+      await send(row.channel_id, "arthur", { title: "財經日報逾時", text: "等了 10 分鐘還沒做好，可能是 GitHub 的截圖流程失敗了。請稍後再試一次 /market。", color: RED });
+      out.push({ id: row.id, ok: false, timeout: true });
+    }
+  }
+  return { delivered: out };
+}
+
 async function dailyVideo(db: SupabaseClient, force = false) {
   const link = await getLink(db);
   const ch = (link?.channels ?? {}).arthur;
@@ -385,18 +457,7 @@ async function dailyVideo(db: SupabaseClient, force = false) {
   const meta = await m.json();
   if (!meta.video) return { skip: `${meta.date} 沒有影音版` };
   if (!force && meta.date !== todayTaipei()) return { skip: `最新的是 ${meta.date}，不是今天` };
-  const v = await dailyFile(meta.video);
-  if (!v.ok) return { error: `下載影片失敗（${v.status}）` };
-  const buf = await v.arrayBuffer();
-  const fd = new FormData();
-  fd.append("payload_json", JSON.stringify({
-    embeds: [{ title: `財經日報 ${meta.date.replaceAll("-", ".")}`, description: "15 秒影音版，可直接下載發到限時動態。", color: GOLD,
-      author: { name: KIND_NAME.arthur, icon_url: AVATAR.arthur }, footer: { text: "A.R.T.H.U.R." } }],
-    attachments: [{ id: 0, filename: meta.video }],
-  }));
-  fd.append("files[0]", new Blob([buf], { type: "video/mp4" }), meta.video);
-  const r = await fetch(`${API}/channels/${ch}/messages`, { method: "POST", headers: { Authorization: `Bot ${BOT()}` }, body: fd });
-  return { ok: r.ok, status: r.status, bytes: buf.byteLength, detail: r.ok ? "" : (await r.text()).slice(0, 300) };
+  return await postDaily(ch, meta, "video", "15 秒影音版，可直接下載發到限時動態。");
 }
 
 // ---------- 設定：註冊指令＋自動對應頻道 ----------
@@ -483,6 +544,11 @@ async function interaction(db: SupabaseClient, body: any) {
       await save({ channels });
       return reply(`好的，${KIND_NAME[kind]} 的通知之後都送到這個頻道。`);
     }
+    if (name === "market") {
+      const kind = body.data.options?.[0]?.value === "image" ? "image" : "video";
+      const u = body.member?.user ?? body.user ?? {};
+      return json({ type: 4, data: { content: await marketRequest(db, kind, body.channel_id, u.global_name || u.username || "Discord") } });
+    }
     if (name === "todos") {
       try { return json({ type: 4, data: await todosView(db, link.owner) }); }
       catch (e) { return reply(`讀取失敗：${String(e).slice(0, 200)}`); }
@@ -532,6 +598,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body.task === "setup") return json(await setup(db));
     if (body.task === "daily-video") return json(await dailyVideo(db, body.force === true));
+    if (body.task === "market-deliver") return json(await marketDeliver(db));
     if (body.task === "test") {
       const link = await getLink(db);
       const out: Record<string, unknown> = {};
