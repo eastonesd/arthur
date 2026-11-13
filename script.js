@@ -34,6 +34,8 @@
   }
   // 每筆資料帶修改時間 u；刪除時留下墓碑，同步時才不會被別台裝置的舊資料「救回來」
   const stamp = (o) => ({ ...o, u: Date.now() });
+  // 原地修改的那筆要更新修改時間，否則同步時雲端的舊版（同一個時間）會蓋回來
+  const touch = (o) => { o.u = Date.now(); return o; };
   const bury = (...ids) => { ids.forEach((id) => { if (id) state.tomb[id] = Date.now(); }); };
 
   /* ---------- clock ---------- */
@@ -577,7 +579,7 @@
     saveLedger((L) => {
       const a = L.accounts.find((x) => x.id === id);
       // 刪除帳戶時，掛在它底下的資產保留，名稱改用銀行名稱
-      L.items.forEach((i) => { if (i.acct === id) { i.name = a ? a.bank : i.name; delete i.acct; stamp(i); } });
+      L.items.forEach((i) => { if (i.acct === id) { i.name = a ? a.bank : i.name; delete i.acct; touch(i); } });
       L.accounts = L.accounts.filter((x) => x.id !== id); bury(id);
     });
   });
@@ -593,7 +595,7 @@
         const paid = Math.min(amount, d.amount);
         d.amount = Math.round((d.amount - paid) * 100) / 100;
         d.pays = [...(d.pays || []), { date: todayIso(), amount: paid }];
-        stamp(d);
+        touch(d);
       });
       $("bAmt").value = ""; $("bAmt").focus();
       return;
@@ -605,7 +607,7 @@
       const a = acctOf(acct);
       saveLedger((L) => {
         const cur = L.items.find((i) => i.kind === "asset" && i.acct === acct);
-        if (cur) { cur.amount = amount; cur.cur = $("bCur").value; stamp(cur); }
+        if (cur) { cur.amount = amount; cur.cur = $("bCur").value; touch(cur); }
         else L.items.push(stamp({ id: uid(), kind: "asset", acct, name: a ? a.bank : "帳戶", amount, cur: $("bCur").value }));
       });
       $("bAmt").value = ""; $("bAmt").focus();
