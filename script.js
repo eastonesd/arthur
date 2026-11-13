@@ -449,6 +449,13 @@
   }
   function renderMoneyDialog() {
     const L = state.ledger || { items: [], fixed: [] };
+    const show = acctVisible();
+    $("acctToggle").setAttribute("aria-checked", String(show));
+    $("acctToggle").setAttribute("aria-label", show ? "隱藏完整帳號" : "顯示完整帳號");
+    const accts = bankAccts();
+    $("acctList").innerHTML = accts.length ? accts.map((a) =>
+      `<li><span class="n">${acctLabel(a)}</span><span class="m"></span><button class="del" type="button" data-del-acct="${a.id}" aria-label="刪除 ${esc(a.bank)} 帳戶">刪除</button></li>`
+    ).join("") : `<li class="empty-note">先在這裡加入銀行帳戶，登打資產時就能直接點選帳戶。</li>`;
     const groups = [["asset", "資產"], ["debt", "負債"]];
     $("balList").innerHTML = L.items.length ? groups.map(([k, label]) => {
       const rows = L.items.filter((i) => i.kind === k);
@@ -459,7 +466,8 @@
           const pays = i.pays || [], paid = pays.reduce((s, p) => s + p.amount, 0), last = pays[pays.length - 1];
           const note = !pays.length ? "" : i.amount <= 0 ? "已還清"
             : `已還 ${money(paid)}・最近 ${+last.date.slice(5, 7)}/${+last.date.slice(8)}`;
-          return `<li><span class="n">${esc(i.name)}${note ? `<small>${note}</small>` : ""}</span><span class="m">${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}</span><button class="del" type="button" data-del-item="${i.id}" aria-label="刪除 ${esc(i.name)}">刪除</button></li>`;
+          const ac = i.acct && acctOf(i.acct);
+          return `<li><span class="n">${ac ? acctLabel(ac) : esc(i.name)}${note ? `<small>${note}</small>` : ""}</span><span class="m">${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}</span><button class="del" type="button" data-del-item="${i.id}" aria-label="刪除 ${esc(i.name)}">刪除</button></li>`;
         }).join("");
     }).join("") : `<li class="empty-note">例：活存、定存、股票、保單價值是資產；房貸、車貸、信貸是負債。</li>`;
     syncBalForm();
@@ -468,6 +476,16 @@
       `<li><span class="n">每月 ${f.day} 號・${esc(f.name)}<small>${f.dir === "out" ? "支出" : "收入"}</small></span><span class="m ${f.dir}">${f.dir === "out" ? "−" : "+"}${money(f.amount)}</span><button class="del" type="button" data-del-fixed="${f.id}" aria-label="刪除 ${esc(f.name)}">刪除</button></li>`
     ).join("") : `<li class="empty-note">例：房租 5 號、信用卡 12 號、薪水 10 號。</li>`;
   }
+  // 銀行帳號：預設只顯示前 4 碼與末 5 碼，中間有幾位就用幾個＊；開關只記在這台裝置
+  function acctVisible() { try { return localStorage.getItem("jarvis.acctVisible") === "1"; } catch { return false; } }
+  const maskNo = (no) => { const d = String(no || ""); return acctVisible() || d.length <= 9 ? d : d.slice(0, 4) + "＊".repeat(d.length - 9) + d.slice(-5); };
+  const bankAccts = () => (state.ledger && state.ledger.accounts) || [];
+  const acctOf = (id) => bankAccts().find((a) => a.id === id);
+  const acctLabel = (a) => `${esc(a.bank)}<span class="acct-no">${maskNo(a.no)}</span>`;
+  $("acctToggle").addEventListener("click", () => {
+    try { localStorage.setItem("jarvis.acctVisible", acctVisible() ? "0" : "1"); } catch {}
+    renderMoneyDialog();
+  });
   // 淨資產顯示開關：只記在這台裝置，預設隱藏
   function nwVisible() { try { return localStorage.getItem("jarvis.nwVisible") === "1"; } catch { return false; } }
   $("nwToggle").addEventListener("click", () => {
@@ -477,6 +495,7 @@
   function saveLedger(mut) {
     if (!state.ledger) state.ledger = { items: [], fixed: [], income: [] };
     if (!state.ledger.income) state.ledger.income = [];
+    if (!state.ledger.accounts) state.ledger.accounts = [];
     state.ledger.goal = GOAL;
     mut(state.ledger); persist(); renderMoney();
   }
@@ -523,18 +542,45 @@
   // 還款：下拉選「還款」後，項目欄換成現有負債清單；金額從該筆負債扣除，並留下日期紀錄（pays）
   function syncBalForm() {
     const pay = $("bKind").value === "pay";
+    const accts = bankAccts(), useAcct = $("bKind").value === "asset" && accts.length > 0;
+    const keepA = $("bAcct").value;
+    $("bAcct").innerHTML = accts.map((a) => `<option value="${a.id}">${esc(a.bank)} ${maskNo(a.no)}</option>`).join("") + `<option value="">其他（自行輸入）</option>`;
+    // 預設選第一個帳戶；使用者自己改選過（含「其他」）才沿用他的選擇
+    const picked = $("bAcct").dataset.picked === "1" && [...accts.map((a) => a.id), ""].includes(keepA);
+    $("bAcct").value = picked ? keepA : (accts[0] ? accts[0].id : "");
+    $("bAcct").hidden = !useAcct;
+    const typeName = !pay && !(useAcct && $("bAcct").value);
     const debts = ((state.ledger && state.ledger.items) || []).filter((i) => i.kind === "debt" && i.amount > 0);
     const keep = $("bDebt").value;
     $("bDebt").innerHTML = debts.length
       ? debts.map((i) => `<option value="${i.id}">${esc(i.name)}（剩 ${i.cur === "USD" ? "US$" : "NT$"} ${money(i.amount)}）</option>`).join("")
       : `<option value="">目前沒有未還清的負債</option>`;
     if (debts.some((i) => i.id === keep)) $("bDebt").value = keep;
-    $("bName").hidden = pay; $("bName").required = !pay;
+    $("bName").hidden = !typeName; $("bName").required = typeName;
     $("bDebt").hidden = !pay; $("bCur").hidden = pay;
-    $("bAmt").placeholder = pay ? "這次還款金額" : "金額";
-    $("bBtn").textContent = pay ? "還款" : "新增";
+    const existing = !pay && useAcct && $("bAcct").value && ((state.ledger && state.ledger.items) || []).find((i) => i.kind === "asset" && i.acct === $("bAcct").value);
+    $("bAmt").placeholder = pay ? "這次還款金額" : existing ? `目前餘額 ${money(existing.amount)}，填新餘額` : "金額";
+    $("bBtn").textContent = pay ? "還款" : existing ? "更新" : "新增";
   }
   $("bKind").addEventListener("change", syncBalForm);
+  $("bAcct").addEventListener("change", () => { $("bAcct").dataset.picked = "1"; syncBalForm(); });
+  $("acctForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const bank = $("aBank").value.trim(), no = $("aNo").value.replace(/\D/g, "");
+    if (!bank) { $("aBank").focus(); return; }
+    if (no.length < 6) { $("aNo").focus(); return; }
+    saveLedger((L) => L.accounts.push(stamp({ id: uid(), bank, no })));
+    $("aBank").value = ""; $("aNo").value = ""; $("aBank").focus();
+  });
+  $("acctList").addEventListener("click", (e) => {
+    const id = e.target.dataset.delAcct; if (!id) return;
+    saveLedger((L) => {
+      const a = L.accounts.find((x) => x.id === id);
+      // 刪除帳戶時，掛在它底下的資產保留，名稱改用銀行名稱
+      L.items.forEach((i) => { if (i.acct === id) { i.name = a ? a.bank : i.name; delete i.acct; stamp(i); } });
+      L.accounts = L.accounts.filter((x) => x.id !== id); bury(id);
+    });
+  });
   $("balForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const amount = num($("bAmt").value);
@@ -553,6 +599,18 @@
       return;
     }
     if (!(amount >= 0)) { $("bAmt").focus(); return; }
+    const acct = !$("bAcct").hidden && $("bAcct").value;
+    if (acct) {
+      // 同一個帳戶只留一筆資產：已有就更新餘額
+      const a = acctOf(acct);
+      saveLedger((L) => {
+        const cur = L.items.find((i) => i.kind === "asset" && i.acct === acct);
+        if (cur) { cur.amount = amount; cur.cur = $("bCur").value; stamp(cur); }
+        else L.items.push(stamp({ id: uid(), kind: "asset", acct, name: a ? a.bank : "帳戶", amount, cur: $("bCur").value }));
+      });
+      $("bAmt").value = ""; $("bAmt").focus();
+      return;
+    }
     saveLedger((L) => L.items.push(stamp({ id: uid(), kind: $("bKind").value, name: $("bName").value.trim(), amount, cur: $("bCur").value })));
     $("bName").value = ""; $("bAmt").value = ""; $("bName").focus();
   });
@@ -590,7 +648,7 @@
       if (d.app !== "jarvis") throw new Error("這不是 A.R.T.H.U.R. 的備份檔");
       const st = (arr) => (arr || []).map((x) => ({ ...x, u: Date.now() }));
       state.clients = d.clients || null; state.book = d.book || null; state.people = st(d.people); state.agenda = st(d.agenda); state.todos = st(d.todos);
-      state.ledger = d.ledger ? { items: st(d.ledger.items), fixed: st(d.ledger.fixed), income: st(d.ledger.income), goal: GOAL } : null;
+      state.ledger = d.ledger ? { items: st(d.ledger.items), fixed: st(d.ledger.fixed), income: st(d.ledger.income), accounts: st(d.ledger.accounts), goal: GOAL } : null;
       store.set(KEYS.clients, state.clients); store.set(KEYS.book, state.book);
       persist(); renderPeople(); renderMoney();
       $("backupHint").textContent = "已還原。";
@@ -645,7 +703,7 @@
         people: mergeList(local.people, remote.people, tomb),
         agenda: mergeList(local.agenda, remote.agenda, tomb),
         todos: mergeList(local.todos, remote.todos, tomb),
-        ledger: hasLedger ? { items: mergeList(L.items, R.items, tomb), fixed: mergeList(L.fixed, R.fixed, tomb), income: mergeList(L.income, R.income, tomb), goal: GOAL } : null,
+        ledger: hasLedger ? { items: mergeList(L.items, R.items, tomb), fixed: mergeList(L.fixed, R.fixed, tomb), income: mergeList(L.income, R.income, tomb), accounts: mergeList(L.accounts, R.accounts, tomb), goal: GOAL } : null,
         gcal: newer(local.gcal, remote.gcal),
         routines: CFG.routines,
       };

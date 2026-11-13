@@ -241,6 +241,8 @@ a{color:var(--cyan)}
 .edit-list .del{background:none;border:1px solid transparent;color:var(--muted);border-radius:6px;cursor:pointer;padding:2px 8px}
 .edit-list .del:hover{color:var(--down);border-color:rgba(255,122,122,.4)}
 .edit-list .empty-note{display:block;border:0}
+.acct-h{display:flex;align-items:center;gap:10px}
+.acct-no{font:500 13px var(--f-display);letter-spacing:.04em;color:var(--muted);margin-left:8px;font-variant-numeric:tabular-nums}
 .edit-list .sum{color:var(--fg);font-weight:500}
 .dlg-foot{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:16px}
 .edit-list li.editing{background:var(--gold-soft)}
