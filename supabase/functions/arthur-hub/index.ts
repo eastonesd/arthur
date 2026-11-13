@@ -91,6 +91,10 @@ async function ecMetrics(owner: string, repo: string): Promise<{ headline: strin
   const week = conv.filter((c) => (c.purchase_time || 0) >= since);
   const weekSum = week.reduce((s, c) => s + (Number(c.commission) || 0), 0);
   const yest = conv.filter((c) => (c.purchase_time || 0) >= Date.now() / 1000 - 86400);
+  // 本月（台北時間，依下單時間）佣金：儀表板的營登門檻進度條用（單月滿 NT$50,000 要改企業申報）
+  const tpeMonth = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(0, 7);
+  const thisMonth = tpeMonth(Date.now());
+  const monthSum = conv.filter((c) => tpeMonth((c.purchase_time || 0) * 1000) === thisMonth).reduce((s, c) => s + (Number(c.commission) || 0), 0);
   return {
     headline: yest.length ? `過去 24 小時成交 ${yest.length} 筆` : `近 7 天佣金 ${money(weekSum)}`,
     metrics: [
@@ -98,6 +102,7 @@ async function ecMetrics(owner: string, repo: string): Promise<{ headline: strin
       { label: "近 7 天", value: `${money(weekSum)}・${week.length} 筆` },
       { label: "發文數", value: String(meta.total_posts || 0) },
       { label: "待發布", value: String(meta.total_drafts || 0) },
+      { label: "本月佣金", value: money(monthSum) },
     ],
   };
 }

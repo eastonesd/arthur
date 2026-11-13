@@ -886,16 +886,16 @@
       return `<div class="pt-close"><span>${c.month} 月業績結案</span><b data-close-at="${c.at}">${countdown(c.at - Date.now())}</b></div>`
         + (p ? `<div class="pt-close pt-pay"><span>下次撥款・${p.salesMonth} 月業績</span><b>${pd}${p.days ? `（${p.days} 天後）` : "（今天）"}</b></div>` : "");
     }
-    // 營登門檻：蝦皮分潤累計佣金滿 NT$50,000 就要改企業申報、辦公司營登（數字取自 arthur-hub 帶回的「累計佣金」）
+    // 營登門檻：蝦皮分潤單月佣金滿 NT$50,000 就要改企業申報、辦公司營登（不跨月累積；數字取自 arthur-hub 帶回的「本月佣金」，依台北時間下單月份）
     const EC_GOAL = 50000;
     function ecGoalHtml(x) {
-      const m = (x.metrics || []).find((k) => k.label === "累計佣金");
+      const m = (x.metrics || []).find((k) => k.label === "本月佣金");
       if (!m) return "";
       const v = Number(String(m.value).replace(/[^\d.]/g, "")) || 0, p = Math.min(v / EC_GOAL * 100, 100);
       const st = p >= 100 ? " done" : p >= 80 ? " near" : "";
       const tail = p >= 100 ? "已達門檻：改企業申報、辦營登" : `還差 NT$${Math.max(EC_GOAL - v, 0).toLocaleString("en-US")}`;
-      return `<div class="ec-goal${st}" title="累計佣金滿 NT$50,000 要改企業申報、處理公司營登">
-        <div class="eg-top"><span>營登門檻</span><b>NT$${Math.round(v).toLocaleString("en-US")} / 50,000</b></div>
+      return `<div class="ec-goal${st}" title="單月佣金滿 NT$50,000 要改企業申報、處理公司營登（不跨月累積）">
+        <div class="eg-top"><span>${new Date(Date.now() + TPE).getUTCMonth() + 1} 月營登門檻</span><b>NT$${Math.round(v).toLocaleString("en-US")} / 50,000</b></div>
         <i><b style="width:${p}%"></b></i><small>${pctTxt(p)}・${tail}</small></div>`;
     }
     setInterval(() => {
