@@ -104,10 +104,10 @@
     if (!n) { chip.hidden = true; return; }
     const r = repos[n.r], isRepo = n.type === "repo";
     const others = linksOf.get(n.id).filter((e) => e[2] !== "收錄檔案").length;
-    const sub = isRepo ? `${files[n.r].length} 個檔案・${r.kind}` : `${r.title}・${(n.sy || []).length} 個函式・${others} 條關聯`;
+    const sub = isRepo ? `${files[n.r].length} 個檔案・${r.kind}` : `${r.title}・${n.sc ?? (n.sy || []).length} 個函式・${others} 條關聯`;
     chip.style.setProperty("--tone", r.color);
     chip.innerHTML = `<i></i><span class="atlas-name">${esc(isRepo ? r.title : n.name.split("/").pop())}</span>`
-      + `<span class="atlas-sub">${esc(sub)}</span><a href="${esc(n.url)}" target="_blank" rel="noopener">原始碼 ↗</a>`;
+      + `<span class="atlas-sub">${esc(sub)}</span><a href="${esc(n.url || `https://github.com/eastonesd/${r.r}/blob/${r.sha}/${n.name}`)}" target="_blank" rel="noopener">原始碼 ↗</a>`;
     chip.hidden = false;
   }
   function choose(n) {

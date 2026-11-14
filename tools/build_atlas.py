@@ -181,7 +181,12 @@ cross("eastone.com", "tools/snapshot.mjs", r"eastone\.com/market/index\.html", "
 
 ids = {n["id"] for n in nodes}
 assert all(e[0] in ids and e[1] in ids for e in edges), "有關聯找不到節點"
-OUT.write_text(("window.ATLAS=" if OUT.name == "atlas-data.js" else "const DATA=") + json.dumps({"repos": repos, "nodes": nodes, "edges": edges}, ensure_ascii=False, separators=(",", ":")) + ";", encoding="utf-8")
+if OUT.name == "atlas-data.js":
+    # 儀表板用精簡版：函式清單只留數量、檔案網址由 repo 的 sha 組出來、關聯不帶網址（約省 60%）
+    slim = [{**{k: v for k, v in n.items() if k not in ("sy", "url")}, "sc": len(n.get("sy", []))} if n["type"] == "file" else n for n in nodes]
+    OUT.write_text("window.ATLAS=" + json.dumps({"repos": repos, "nodes": slim, "edges": [e[:3] for e in edges]}, ensure_ascii=False, separators=(",", ":")) + ";", encoding="utf-8")
+else:
+    OUT.write_text("const DATA=" + json.dumps({"repos": repos, "nodes": nodes, "edges": edges}, ensure_ascii=False, separators=(",", ":")) + ";", encoding="utf-8")
 by = {}
 for n in nodes: by.setdefault(repos[n["r"]]["r"], [0, 0]); by[repos[n["r"]]["r"]][0] += n["type"] == "file"; by[repos[n["r"]]["r"]][1] += len(n.get("sy", []))
 rel = {}
