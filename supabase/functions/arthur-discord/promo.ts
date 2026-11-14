@@ -72,7 +72,6 @@ const RULES = `你是東石電商的帶貨短片企劃，替 Threads 帳號寫�
 1. 只使用商品頁截圖上「看得到」的資訊。看不到的一律寫進 unknown，不得自行補寫、推測或美化。
 2. 不得寫醫療或療效宣稱（助眠、治療、改善失眠、消除疲勞、瘦身…），不得寫「100%」「最」「第一」「保證」「限時」。
 3. 不寫具體價格、折扣、優惠券（會變動）；銷量只寫「熱銷」，除非補充說明要求寫數字。
-   評價：截圖上顯示 5.0 時寫「評價仍然是5顆星！」；4.9 時寫「評價4.9顆星」；4.8 以下或看不到就完全不提評價。補充說明另有要求時以補充說明為準。
 4. 不得用第一人稱捏造使用經驗（例如「我用了以後…」），用商品介紹的口吻。
 5. 一支片只講一個客群、一個核心賣點、一個行動呼籲；行動呼籲固定是「連結放在留言」。
 6. 腳本 4 幕＋結尾 1 幕，旁白合計約 55～65 個字（15 秒內念完）；每幕 head 不超過 12 字（可用「｜」換行），say 不超過 24 字（可用「｜」換行）。
@@ -85,7 +84,7 @@ const RULES = `你是東石電商的帶貨短片企劃，替 Threads 帳號寫�
  "post":"Threads 主文（80～160 字，不放網址，結尾一個問句引導留言，最後一行 2～3 個 hashtag）",
  "check":["自我檢查：列出你刻意避開的宣稱或需要人工確認的地方"]}`;
 
-async function claude(row: any) {
+async function claude(row: any, extra = "") {
   const content: any[] = [
     ...row.page_urls.map((u: string) => ({ type: "image", source: { type: "url", url: u } })),
     { type: "text", text: `以上是商品頁截圖。商品圖共有 ${row.img_urls.length} 張（依序編號 1～${row.img_urls.length}），如下：` },
@@ -95,7 +94,7 @@ async function claude(row: any) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST", signal: AbortSignal.timeout(110_000),
     headers: { "content-type": "application/json", "x-api-key": Deno.env.get("ANTHROPIC_API_KEY")!, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL(), max_tokens: 8000, system: RULES, messages: [{ role: "user", content }] }),
+    body: JSON.stringify({ model: MODEL(), max_tokens: 8000, system: extra ? `${RULES}\n\n補充規則（優先於上面的規則，但補充說明欄另有要求時以補充說明為準）：\n${extra}` : RULES, messages: [{ role: "user", content }] }),
   });
   if (!r.ok) throw new Error(`Claude 回應 ${r.status}：${(await r.text()).slice(0, 200)}`);
   const res = await r.json();
@@ -110,9 +109,12 @@ async function claude(row: any) {
 
 async function write(db: SupabaseClient, row: any): Promise<Result> {
   try {
+    // 可隨時調整的寫作規則放在資料表 arthur_settings（key = promo_rules），改規則不必重新部署
+    const { data: st } = await db.from("arthur_settings").select("value").eq("key", "promo_rules").maybeSingle();
+    const extra = String(st?.value ?? "");
     let pkg: any;
-    try { pkg = await claude(row); }
-    catch (e) { console.error("promo claude 第一次失敗", String(e)); pkg = await claude(row); }   // 偶發失敗重試一次
+    try { pkg = await claude(row, extra); }
+    catch (e) { console.error("promo claude 第一次失敗", String(e)); pkg = await claude(row, extra); }   // 偶發失敗重試一次
     const n = row.img_urls.length;
     const spec = {
       name: pkg.facts?.name || "商品", source: row.link, voice: "zh-TW-HsiaoChenNeural", rate: "+15%",

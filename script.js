@@ -956,9 +956,11 @@
           x.pushed_at ? { label: "最後更新", value: ago(x.pushed_at) } : null,
           { label: "可見度", value: x.private ? "私人" : "公開" },
         ].filter(Boolean);
-        // 東石電商多了結案倒計時，只留兩個最重要的數字
-        const mlist = (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, repo === "eastone.ecommerce" || (repo === "eastone.saga" && x.monet) ? 2 : 4);
-        const metrics = mlist.map((m) => `<div class="pm"><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
+        // 沒有網站的專案（例如東石交易）：可見度放在「最後更新」正下方（右欄）
+        if (!x.site && fallback.length === 3) fallback[2].col2 = true;
+        // 東石電商只留營登門檻與結案倒計時（累計佣金、近 7 天不顯示）
+        const mlist = repo === "eastone.ecommerce" ? [] : (x.metrics && x.metrics.length ? x.metrics : fallback).slice(0, repo === "eastone.saga" && x.monet ? 2 : 4);
+        const metrics = mlist.map((m) => `<div class="pm"${m.col2 ? ' style="grid-column:2"' : ""}><span>${esc(m.label)}</span><b>${esc(m.value)}</b></div>`).join("");
         const fails = (x.failed || []).map((f) => `「${esc(f.name)}」失敗`).join("、");
         // 東石電商的標題（近 7 天佣金）跟下面數字重複，省下空間給結案倒計時
         const line = fails || (repo === "eastone.ecommerce" ? "" : x.headline) || (x.kind === "readonly" ? "只讀監看：A.R.T.H.U.R. 不會對這個專案下任何指令" : x.note || "");
