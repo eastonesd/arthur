@@ -72,6 +72,7 @@ const RULES = `你是東石電商的帶貨短片企劃，替 Threads 帳號寫�
 1. 只使用商品頁截圖上「看得到」的資訊。看不到的一律寫進 unknown，不得自行補寫、推測或美化。
 2. 不得寫醫療或療效宣稱（助眠、治療、改善失眠、消除疲勞、瘦身…），不得寫「100%」「最」「第一」「保證」「限時」。
 3. 不寫具體價格、折扣、優惠券（會變動）；銷量只寫「熱銷」，除非補充說明要求寫數字。
+   評價：截圖上顯示 5.0 時寫「評價仍然是5顆星！」；4.9 時寫「評價4.9顆星」；4.8 以下或看不到就完全不提評價。補充說明另有要求時以補充說明為準。
 4. 不得用第一人稱捏造使用經驗（例如「我用了以後…」），用商品介紹的口吻。
 5. 一支片只講一個客群、一個核心賣點、一個行動呼籲；行動呼籲固定是「連結放在留言」。
 6. 腳本 4 幕＋結尾 1 幕，旁白合計約 55～65 個字（15 秒內念完）；每幕 head 不超過 12 字（可用「｜」換行），say 不超過 24 字（可用「｜」換行）。
@@ -155,7 +156,7 @@ export async function promoTick(db: SupabaseClient) {
     const fd = new FormData();
     fd.append("payload_json", JSON.stringify({
       embeds: [{ title: `帶貨片預覽：${String(f.name ?? row.slug).slice(0, 80)}`, color: GOLD, author: { name: "東石電商", icon_url: AV }, footer: { text: `A.R.T.H.U.R.・${row.slug}` },
-        description: `${facts}\n\n**Threads 主文：**\n${p.post}\n\n**留言：**商品在這👉 ${row.link}`.slice(0, 4000) }],
+        description: `${facts}\n\n**Threads 主文：**\n${p.post}\n\n**留言：**${row.link}`.slice(0, 4000) }],
       components: [{ type: 1, components: [
         { type: 2, style: 3, label: "核准發布", custom_id: `promo-ok:${row.id}` },
         { type: 2, style: 4, label: "退回重寫", custom_id: `promo-no:${row.id}` }] }],
@@ -190,7 +191,7 @@ export async function promoApprove(db: SupabaseClient, id: string, who: string) 
   const p = row.pkg ?? {};
   const pkg = {
     slug: row.slug, account: "ambition._6268", name: p.facts?.name ?? row.slug, keyword: p.keyword || "帶貨片", price: 0,
-    link: row.link, video_url: row.video_url, text: p.post, reply: `商品在這👉 ${row.link}\n價格以蝦皮頁面為準`,
+    link: row.link, video_url: row.video_url, text: p.post, reply: row.link,
     post_at, approved_by: `${who}（Discord 核准）`, approved_at: new Date().toISOString(),
   };
   await putFile(EC, `promo/${row.slug}.json`, JSON.stringify(pkg, null, 2) + "\n", `帶貨片發布包：${String(pkg.name).slice(0, 30)}（${when(post_at)} 發布）`);
