@@ -29,7 +29,7 @@
 // ============================================================
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
 import { niceDate, parseDate, parseTime, todayTaipei } from "./when.ts";
-import { promoApprove, promoRejectModal, promoRewrite, promoStart, promoTick } from "./promo.ts";
+import { promoApprove, promoRejectModal, promoRetry, promoRewrite, promoStart, promoTick } from "./promo.ts";
 
 // 應用程式 ID 與公鑰是公開資訊（不是密碼），直接當預設值；機器人金鑰 DISCORD_BOT_TOKEN 才是秘密
 const PUB = () => Deno.env.get("DISCORD_PUBLIC_KEY") || "f95399e38b012bcaff1f3b49c0c488e856c8cc1e25570812bc261136ab8531ae";
@@ -651,6 +651,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body.task === "setup") return json(await setup(db));
     if (body.task === "ig-story") return json(await igStory(db, { force: body.force === true, last: body.last === true, username: body.username }));
+    if (body.task === "promo-retry") return json(await promoRetry(db, String(body.slug ?? "")));
     if (body.task === "market-deliver") return json({ market: await marketDeliver(db), promo: await promoTick(db) });
     if (body.task === "test") {
       const link = await getLink(db);

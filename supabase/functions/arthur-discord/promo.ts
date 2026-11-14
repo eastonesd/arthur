@@ -94,18 +94,24 @@ async function claude(row: any) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST", signal: AbortSignal.timeout(110_000),
     headers: { "content-type": "application/json", "x-api-key": Deno.env.get("ANTHROPIC_API_KEY")!, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL(), max_tokens: 3000, system: RULES, messages: [{ role: "user", content }] }),
+    body: JSON.stringify({ model: MODEL(), max_tokens: 8000, system: RULES, messages: [{ role: "user", content }] }),
   });
   if (!r.ok) throw new Error(`Claude 回應 ${r.status}：${(await r.text()).slice(0, 200)}`);
-  const raw = ((await r.json()).content ?? []).map((c: any) => c.text ?? "").join("");
-  const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+  const res = await r.json();
+  const raw = (res.content ?? []).map((c: any) => c.text ?? "").join("");
+  if (res.stop_reason === "max_tokens") throw new Error("Claude 的回覆太長被截斷了");
+  let j: any;
+  try { j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); }
+  catch { throw new Error(`Claude 沒有回傳可讀的 JSON（${res.stop_reason}）：${raw.slice(0, 300)}`); }
   if (!Array.isArray(j.scenes) || j.scenes.length < 3 || !j.post) throw new Error("Claude 回傳格式不完整");
   return j;
 }
 
 async function write(db: SupabaseClient, row: any): Promise<Result> {
   try {
-    const pkg = await claude(row);
+    let pkg: any;
+    try { pkg = await claude(row); }
+    catch (e) { console.error("promo claude 第一次失敗", String(e)); pkg = await claude(row); }   // 偶發失敗重試一次
     const n = row.img_urls.length;
     const spec = {
       name: pkg.facts?.name || "商品", source: row.link, voice: "zh-TW-HsiaoChenNeural", rate: "+15%",
@@ -204,4 +210,14 @@ export async function promoRewrite(db: SupabaseClient, id: string, feedback: str
   const upd = { ...row, feedback, status: "writing" };
   await db.from("arthur_promo").update({ feedback, status: "writing", updated_at: new Date().toISOString() }).eq("id", id);
   return await write(db, upd);
+}
+
+// 管理用：重跑寫稿（cron token 呼叫 {task:"promo-retry", slug}）
+export async function promoRetry(db: SupabaseClient, slug: string) {
+  const { data: row } = await db.from("arthur_promo").select("*").eq("slug", slug).maybeSingle();
+  if (!row) return { error: "找不到" };
+  await db.from("arthur_promo").update({ status: "writing", error: null, updated_at: new Date().toISOString() }).eq("id", row.id);
+  const r = await write(db, row);
+  if (row.channel_id) await say(row.channel_id, r.title, r.text, r.ok ? GOLD : RED);
+  return r;
 }
