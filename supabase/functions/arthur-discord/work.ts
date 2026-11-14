@@ -1,4 +1,4 @@
-// /saga、/saga-ref、/saga-stats、/dpf
+// /saga、/saga-stats、/dpf
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
 import { b64decode, b64encode, ghHeaders, num, type Result } from "./shared.ts";
 
@@ -18,40 +18,6 @@ export async function sagaCreate(d: Record<string, string>): Promise<Result> {
   const j = await res.json();
   return { ok: true, title: `第 ${j.number} 號劇開始企劃`, url: `https://eastonesd.github.io/eastone.saga/#/s/${j.number}`,
     text: `「${idea.slice(0, 200)}」\n${eps} 集・每集 ${secs} 秒。幾分鐘後會寫好角色表與分集大綱。` };
-}
-
-// Discord 的附件網址幾小時內就失效：先轉存到 Supabase Storage（私有 bucket saga-refs），Issue 放 90 天的簽名網址
-export async function keepVideo(db: SupabaseClient, att: any): Promise<string | null> {
-  try {
-    const r = await fetch(att.url);
-    if (!r.ok) return null;
-    const buf = new Uint8Array(await r.arrayBuffer());
-    const ext = (String(att.filename ?? "").match(/\.(mp4|mov|webm|mkv|3gp)$/i)?.[1] ?? "mp4").toLowerCase();
-    const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
-    const up = await db.storage.from("saga-refs").upload(path, buf, { contentType: att.content_type || "video/mp4", upsert: false });
-    if (up.error) { console.error("storage upload", up.error.message); return null; }
-    const signed = await db.storage.from("saga-refs").createSignedUrl(path, 90 * 86400);
-    return signed.data?.signedUrl ?? null;
-  } catch (e) { console.error("keepVideo", e); return null; }
-}
-
-export async function sagaRef(db: SupabaseClient, opts: Record<string, string>, attachment: any, who: string): Promise<Result> {
-  const token = Deno.env.get("ARTHUR_GITHUB_TOKEN");
-  if (!token) return { ok: false, title: "無法送出", text: "還沒設定 GitHub 金鑰（ARTHUR_GITHUB_TOKEN）。" };
-  const likes = (opts.likes ?? "").trim(), source = (opts.source ?? "").trim();
-  const url = String(attachment?.url ?? "");
-  if (!/^https:\/\//.test(url)) return { ok: false, title: "無法送出", text: "沒有收到影片附件。" };
-  if (attachment?.content_type && !String(attachment.content_type).startsWith("video/"))
-    return { ok: false, title: "無法送出", text: `這不是影片檔（${attachment.content_type}）。` };
-  const kept = await keepVideo(db, attachment);
-  const res = await fetch(`https://api.github.com/repos/${SAGA_REPO}/issues`, { method: "POST", headers: ghHeaders(token), body: JSON.stringify({
-    title: "標竿：" + likes.slice(0, 24), labels: ["標竿"],
-    body: `### 影片\n\n${kept ?? url}\n\n### 喜歡哪裡\n\n${likes}\n\n### 出處\n\n${source || "_No response_"}\n\n由 A.R.T.H.U.R. 從 Discord 送出（${who}）`,
-  }) });
-  if (!res.ok) return { ok: false, title: "無法送出", text: `GitHub 回應 ${res.status}，請確認金鑰對 eastone.saga 有 Issues 寫入權限。` };
-  const j = await res.json();
-  return { ok: true, title: `標竿 #${j.number} 已送出分析`, url: j.html_url,
-    text: `「${likes.slice(0, 200)}」${source ? `\n出處：${source}` : ""}\n${kept ? "影片已轉存（90 天有效）。" : "⚠️ 影片轉存失敗，用的是 Discord 原始網址（幾小時後失效）。"}\n幾分鐘後分析完成，結果會貼在這個頻道。` };
 }
 
 export async function sagaStats(opts: Record<string, string>, who: string): Promise<Result> {

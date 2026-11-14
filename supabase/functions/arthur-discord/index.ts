@@ -6,7 +6,6 @@
 //    /saga  開表單 → 東石影音開拍新劇（eastone.saga 開「新劇」Issue）
 //    /ec    蝦皮連結＋商品頁截圖＋商品圖 → 帶貨片（腳本、影片、貼文）→ 頻道預覽核准 → 排程發到 Threads（見 promo.ts）
 //    /dpf   開表單 → 東石數位收件匣，電腦上的 DPF 領取後產生企劃
-//    /saga-ref 丟一段標竿短劇片段 → eastone.saga 開「標竿」Issue，自動分析（規格見 eastone.saga 的 ARTHUR-DISCORD.md）
 //    /saga-stats 手動回報 TikTok 粉絲／上月有效觀看 → 寫入 eastone.saga 的 stats/manual.json
 //    /todo   開表單 → 新增待辦到 A.R.T.H.U.R.（jarvis_state.todos，儀表板與 LINE 21:00 待辦追蹤都看得到）
 //    /agenda 開表單 → 新增行程到 A.R.T.H.U.R. 行事曆（jarvis_state.agenda，早安簡報與 LINE 行程前一小時提醒都會用到）
@@ -30,7 +29,7 @@
 // ============================================================
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.117.3";
 import { adminClient, API, APP, AVATAR, bot, BOT, getLink, GOLD, json, KIND_NAME, PUB, RED, type Result, send } from "./shared.ts";
-import { dpfEnqueue, sagaCreate, sagaRef, sagaStats } from "./work.ts";
+import { dpfEnqueue, sagaCreate, sagaStats } from "./work.ts";
 import { agendaAdd, todoAdd, todoDone, todosView } from "./todo.ts";
 import { igStory, marketDeliver, marketRequest } from "./daily.ts";
 import { promoApprove, promoRejectModal, promoRetry, promoRewrite, promoStart, promoTick } from "./promo.ts";
@@ -66,12 +65,6 @@ const COMMANDS = [
       { type: 3, name: "note", name_localizations: { "zh-TW": "補充" }, description: "例：主打午休族、可以寫銷量", required: false, max_length: 500 },
     ] },
   { name: "dpf", description: "東石數位：產生一個數位商品企劃" },
-  { name: "saga-ref", description: "東石影音：丟一段標竿短劇片段，自動分析",
-    options: [
-      { type: 11, name: "video", name_localizations: { "zh-TW": "影片" }, description: "短劇片段（30～60 秒、10MB 以內最好）", required: true },
-      { type: 3, name: "likes", name_localizations: { "zh-TW": "喜歡哪裡" }, description: "例如：男主吼的那句、運鏡", required: true, max_length: 500 },
-      { type: 3, name: "source", name_localizations: { "zh-TW": "出處" }, description: "例如：紅果《某某》", required: false, max_length: 200 },
-    ] },
   { name: "saga-stats", description: "東石影音：手動回報 TikTok 數字（TikTok 不開放個人帳號數據）",
     options: [
       { type: 3, name: "platform", name_localizations: { "zh-TW": "平台" }, description: "平台", required: true, choices: [{ name: "TikTok", value: "tiktok" }] },
@@ -182,13 +175,6 @@ async function interaction(db: SupabaseClient, body: any) {
   if (body.type === 2) {
     const name = body.data?.name;
     if (name in FORMS) return json(modal(name));
-    if (name === "saga-ref") {
-      const opts: Record<string, string> = Object.fromEntries((body.data.options ?? []).map((o: any) => [o.name, String(o.value ?? "")]));
-      const att = body.data.resolved?.attachments?.[opts.video];
-      const u = body.member?.user ?? body.user ?? {};
-      const who = u.global_name || u.username || "Discord";
-      return deferred(body, "saga", () => sagaRef(db, opts, att, who));
-    }
     if (name === "ec") {
       const opts: Record<string, string> = Object.fromEntries((body.data.options ?? []).map((o: any) => [o.name, String(o.value ?? "")]));
       const u = body.member?.user ?? body.user ?? {};
